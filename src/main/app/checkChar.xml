@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd">
+    <flow name="checkChar">
+        <set-variable variableName="User" value="#[message.inboundProperties.'User']" doc:name="Set User"/>
+        <set-variable variableName="Pass" value="#[message.inboundProperties.'Pass']" doc:name="Set Pass"/>
+        <set-variable variableName="saveUser" value="#[message.inboundProperties.'User']" doc:name="Set saveUser"/>
+        <set-variable variableName="savePass" value="#[message.inboundProperties.'Pass']" doc:name="Set savePass"/>
+        <expression-component doc:name="Expression"><![CDATA[flowVars.User = org.mule.util.StringUtils.replace(flowVars.User,"'","")
+flowVars.User = org.mule.util.StringUtils.replace(flowVars.User," ","")
+flowVars.User = org.mule.util.StringUtils.replace(flowVars.User,"=","")
+flowVars.Pass = org.mule.util.StringUtils.replace(flowVars.Pass,"'","")
+flowVars.Pass = org.mule.util.StringUtils.replace(flowVars.Pass," ","")
+flowVars.Pass = org.mule.util.StringUtils.replace(flowVars.Pass,"=","")]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[flowVars.Pass != flowVars.savePass || flowVars.User != flowVars.saveUser]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <set-variable variableName="apiKeyRecieved" value="#[message.inboundProperties.'Key']" doc:name="Set apiKeyRecieved"/>
+        <expression-component doc:name="Decrypt Key"><![CDATA[flowVars.apiKeyRecieved = topServices.Security.Decrypt(flowVars.apiKeyRecieved)]]></expression-component>
+        <set-variable variableName="apiKey" value="${api.key}" doc:name="Get apiKey"/>
+        <expression-filter expression="#[flowVars.apiKey == flowVars.apiKeyRecieved]" doc:name="Expression"/>
+        <set-variable variableName="stallAmount" value="${stall.amount}" doc:name="Set stallAmount"/>
+        <set-variable variableName="stallInvType" value="${stall.invType}" doc:name="Set stallInvType"/>
+        <db:select config-ref="Generic_Database_Configuration" doc:name="Database" target="#[flowVars.firstDB]">
+            <db:parameterized-query><![CDATA[SELECT id
+      ,name
+      ,password
+      ,login_status
+  FROM AccountServer.dbo.account_login
+  WHERE name = #[flowVars.user] and password = #[flowVars.pass]]]></db:parameterized-query>
+        </db:select>
+        <choice doc:name="Choice">
+            <when expression="#[flowVars.firstDB.size() == 1]">
+                <set-variable variableName="loginStatus" value="#[flowVars.firstDB[0].login_status]" doc:name="Set loginStatus"/>
+                <expression-component doc:name="Expression"><![CDATA[flowVars.firstDB = flowVars.firstDB[0].name]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.secDB]" doc:name="Database">
+                    <db:parameterized-query><![CDATA[SELECT [cha_ids]
+  FROM [GameDB].[dbo].[account]
+  WHERE act_name = #[flowVars.firstDB]]]></db:parameterized-query>
+                </db:select>
+                <expression-component doc:name="Expression"><![CDATA[flowVars.secDB = flowVars.secDB[0];
+flowVars.savePayload = payload;
+payload = topServices.CharParser.parseIds(flowVars.secDB.cha_ids);]]></expression-component>
+                <foreach doc:name="For Each">
+                    <choice doc:name="Choice">
+                        <when expression="#[payload == flowVars.charId]">
+                            <set-variable variableName="charChecked" value="#[1]" doc:name="Set charChecked"/>
+                        </when>
+                        <otherwise>
+                            <choice doc:name="Choice">
+                                <when expression="#[flowVars.charChecked != 1]">
+                                    <set-variable variableName="charChecked" value="#[0]" doc:name="Set charChecked"/>
+                                </when>
+                                <otherwise>
+                                    <logger message="Already Found" level="INFO" doc:name="Logger"/>
+                                </otherwise>
+                            </choice>
+                        </otherwise>
+                    </choice>
+                </foreach>
+                <expression-component doc:name="Expression"><![CDATA[payload = flowVars.savePayload;]]></expression-component>
+            </when>
+            <otherwise>
+                <set-payload value="Failed to connect to Character Account" doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[204]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+</mule>

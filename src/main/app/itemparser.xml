@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:file="http://www.mulesoft.org/schema/mule/file" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+    <file:connector name="File" outputPattern="*.csv" autoDelete="false" streaming="true" validateConnections="true" doc:name="File"/>
+    <flow name="ToFile">
+
+        <json:json-to-object-transformer returnClass="java.lang.Object" doc:name="JSON to Object"/>
+        <foreach doc:name="For Each">
+            <choice doc:name="Choice">
+                <when expression="#[payload.lance == &quot;0&quot; &amp;&amp; payload.phylis == &quot;0&quot; &amp;&amp; payload.cairse == &quot;0&quot; &amp;&amp; payload.ami == &quot;0&quot; &amp;&amp; payload.trade == 1 &amp;&amp; (payload.type != 25 || payload.type != 26)]">
+                    <set-payload value="
+INSERT INTO [dbo].[ItemsDB]
+	(itemId, itemName)
+VALUES ( #[payload.itemId], '#[payload.itemName]');
+" doc:name="Set Payload"/>
+                    <choice doc:name="Choice">
+                        <when expression="#[flowVars.insertString == null]">
+                            <set-variable variableName="insertString" value="#[payload]" doc:name="Set insertString"/>
+                        </when>
+                        <otherwise>
+                            <set-variable variableName="insertString" value="#[flowVars.insertString] #[payload]" doc:name="Set insertString"/>
+                        </otherwise>
+                    </choice>
+                    <logger message="Item added" level="INFO" doc:name="Logger"/>
+                </when>
+                <otherwise>
+                    <logger message="Item Not Permited" level="INFO" doc:name="Logger"/>
+                </otherwise>
+            </choice>
+        </foreach>
+        <set-payload value="#[flowVars.insertString]" doc:name="Set Payload"/>
+        <file:outbound-endpoint path="C:\tmp" outputPattern="sql.txt" responseTimeout="10000" doc:name="File"/>
+        <logger message="All items uploaded" level="INFO" doc:name="Logger"/>
+    </flow>
+    <flow name="ToDB">
+        <file:inbound-endpoint path="src/main/resources/Items" moveToDirectory="src/main/resources/" connector-ref="File" responseTimeout="10000" doc:name="File"/>
+        
+        <!-- <dw:transform-message doc:name="Transform Message" metadata:id="737d7194-8cf6-4391-8445-a88f03746dc6">
+            <dw:input-payload mimeType="application/csv"/>
+            <dw:set-payload><![CDATA[%dw 1.0
+ %output application/json 
+
+ payload map ((payload01 , indexOfPayload01) -> { 
+ 	itemId: payload01.ID as :number, 
+	itemName: payload01."Item Name", 
+ 	lance: payload01."Lance Texture",
+	phylis: payload01."Carsise Texture", 
+ 	cairse: payload01."Phyllis Texture", 
+	ami: payload01."Ami Texture", 
+	trade: payload01."Tradeable Or Not" as :number, 
+ 	type: payload01.Type as :number 
+ })]]></dw:set-payload> 
+        </dw:transform-message> -->
+
+        <json:json-to-object-transformer returnClass="java.lang.Object" doc:name="JSON to Object"/>
+        <foreach doc:name="For Each">
+            <choice doc:name="Choice">
+                <when expression="#[payload.lance == &quot;0&quot; &amp;&amp; payload.phylis == &quot;0&quot; &amp;&amp; payload.cairse == &quot;0&quot; &amp;&amp; payload.ami == &quot;0&quot; &amp;&amp; payload.trade == 1 &amp;&amp; (payload.type != 25 || payload.type != 26)]">
+                    <db:insert config-ref="Generic_Database_Configuration" doc:name="Database">
+                        <db:parameterized-query><![CDATA[INSERT INTO OnlineStall.dbo.ItemsDB 
+(itemId, itemName)
+VALUES
+(#[payload.itemId], #[payload.itemName])]]></db:parameterized-query>
+                    </db:insert>
+                    <logger message="Item added #[flowVars.counter]" level="INFO" doc:name="Logger"/>
+                </when>
+                <otherwise>
+                    <logger message="Item Not Permited" level="INFO" doc:name="Logger"/>
+                </otherwise>
+            </choice>
+        </foreach>
+        <logger message="All items uploaded" level="INFO" doc:name="Logger"/>
+    </flow>
+</mule>

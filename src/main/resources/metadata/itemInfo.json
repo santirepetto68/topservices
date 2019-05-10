@@ -1,0 +1,21 @@
+[{
+		"itemId": 1,
+		"itemName": "nombre",
+		"lance": "22202",
+		"phylis": "22201",
+		"cairse": "22201",
+		"ami": "22202",
+		"trade": 1,
+		"type": 26
+	},
+	{
+		"itemId": 2,
+		"itemName": "nombre",
+		"lance": "22202",
+		"phylis": "22201",
+		"cairse": "22201",
+		"ami": "22202",
+		"trade": 2,
+		"type": 25
+	}
+]

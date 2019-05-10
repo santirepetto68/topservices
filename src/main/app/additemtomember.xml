@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd">
+    <flow name="addItemToMember">
+        <flow-ref name="itemsToAddlv#[flowVars.clubLvl]" doc:name="Call itemsToAddlv"/>
+        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT 
+      cha_id,
+      type_id,
+      content
+FROM GameDB.dbo.Resource
+WHERE cha_id = #[flowVars.charId] AND type_id = #[flowVars.stallInvType]]]></db:parameterized-query>
+        </db:select>
+        <expression-component doc:name="Expression"><![CDATA[payload = topServices.CharParser.parseInv(payload[0].content);
+flowVars.decodedInv = topServices.CharParser.decryptInv(payload[2],'19800216');
+payload = topServices.CharParser.getInventory(payload[0],payload[1],flowVars.decodedInv);
+
+]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[flowVars.clubLvl == 55]">
+                <expression-component doc:name="Expression1"><![CDATA[payload = topServices.CharParser.addItem(payload,flowVars.itemAdded1);
+payload = topServices.CharParser.addItem(payload,flowVars.itemAdded2);
+payload = topServices.CharParser.addItem(payload,flowVars.itemAdded3);
+flowVars.Inventory = topServices.CharParser.addItem(payload,flowVars.itemAdded4);
+payload = flowVars.Inventory.Items;
+]]></expression-component>
+
+            </when>
+            <when expression="#[flowVars.stallItemsId != null]">
+                <expression-component doc:name="Expression2"><![CDATA[flowVars.Inventory = topServices.CharParser.addItem(payload,flowVars.itemToAdd);
+payload = flowVars.Inventory.Items;
+]]></expression-component>
+            </when>
+            <when expression="#[flowVars.clubLvl == 45]">
+                <expression-component doc:name="Expression3"><![CDATA[payload = topServices.CharParser.addItem(payload,flowVars.itemAdded1);
+payload = topServices.CharParser.addItem(payload,flowVars.itemAdded2);
+flowVars.Inventory = topServices.CharParser.addItem(payload,flowVars.itemAdded3);
+payload = flowVars.Inventory.Items;
+]]></expression-component>
+            </when>
+
+            <otherwise>
+                <expression-component doc:name="Expression4"><![CDATA[payload = topServices.CharParser.addItem(payload,flowVars.itemAdded1);
+payload = topServices.CharParser.addItem(payload,flowVars.itemAdded2);
+payload = topServices.CharParser.addItem(payload,flowVars.itemAdded3);
+payload = topServices.CharParser.addItem(payload,flowVars.itemAdded4);
+flowVars.Inventory = topServices.CharParser.addItem(payload,flowVars.itemAdded5);
+payload = flowVars.Inventory.Items;
+]]></expression-component>
+            </otherwise>
+        </choice>
+        <foreach doc:name="For Each">
+            <choice doc:name="Choice">
+                <when expression="#[payload.cero4 == 0]">
+                    <set-payload value="#[payload.itemIndex],#[payload.itemId],#[payload.itemAmount],#[payload.itemDur1],#[payload.itemDur2],#[payload.itemEne1],#[payload.itemEne2],#[payload.cero1],#[payload.cero2],#[payload.cero3],#[payload.cero4];" doc:name="Set Payload"/>
+                </when>
+                <otherwise>
+                    <set-payload value="#[payload.itemIndex],#[payload.itemId],#[payload.itemAmount],#[payload.itemDur1],#[payload.itemDur2],#[payload.itemEne1],#[payload.itemEne2],#[payload.cero1],#[payload.cero2],#[payload.cero3],#[payload.cero4],#[payload.attr1],#[payload.attr2],#[payload.attr3],#[payload.attr4],#[payload.attr5],#[payload.attr6],#[payload.attr7],#[payload.attr8],#[payload.attr9],#[payload.attr10];" doc:name="Set Payload"/>
+                </otherwise>
+            </choice>
+
+            <choice doc:name="Choice">
+                <when expression="#[flowVars.itemString == null]">
+                    <set-variable variableName="itemString" value="#[payload]" doc:name="Set itemString"/>
+                </when>
+                <otherwise>
+                    <set-variable variableName="itemString" value="#[flowVars.itemString]#[payload]" doc:name="Set itemString"/>
+                </otherwise>
+            </choice>
+        </foreach>
+        <expression-component doc:name="Expression"><![CDATA[payload = flowVars.Inventory]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.size &lt;= payload.maxSize]">
+                <set-payload value="#[payload.type];#[payload.size];#[flowVars.itemString]#[payload.crc]" doc:name="Set Payload"/>
+
+                <expression-component doc:name="Expression"><![CDATA[flowVars.encryptedInv = topServices.CharParser.encryptInv(payload,'19800216');
+payload = flowVars.Inventory;
+
+
+]]></expression-component>
+                <set-payload value="#[payload.maxSize]@#[payload.no]##[flowVars.encryptedInv]" doc:name="Set Payload"/>
+                <db:update config-ref="Generic_Database_Configuration" doc:name="Database">
+                    <db:parameterized-query><![CDATA[UPDATE GameDB.dbo.Resource SET content = #[payload] WHERE cha_id = #[flowVars.charId] AND type_id = #[flowVars.stallInvType]]]></db:parameterized-query>
+
+                </db:update>
+                <set-payload value="#[1]" doc:name="Set Payload"/>
+            </when>
+            <otherwise>
+                <set-payload value="#[0]" doc:name="Set Payload"/>
+            </otherwise>
+        </choice>
+    </flow>
+    <sub-flow name="itemsToAddlv1">
+        <set-payload value="{&quot;itemId&quot;: #[flowVars.itemId],&quot;itemAmount&quot;: #[flowVars.itemAmount],&quot;itemDur1&quot;:0,&quot;itemDur2&quot;:0,&quot;itemEne1&quot;:0,&quot;itemEne2&quot;:0,&quot;cero1&quot;:0,&quot;cero2&quot;:0,&quot;cero3&quot;:0,&quot;cero4&quot;:0}" doc:name="Set Payload"/>
+        <json:json-to-object-transformer returnClass="topModels.Items" doc:name="JSON to Object"/>
+        <set-variable variableName="itemToAdd" value="#[payload]" doc:name="Variable"/>
+    </sub-flow>
+    <sub-flow name="itemsToAddlv45">
+
+        <set-payload value="{&quot;itemId&quot;:1145,&quot;itemAmount&quot;:3,&quot;itemDur1&quot;:0,&quot;itemDur2&quot;:0,&quot;itemEne1&quot;:0,&quot;itemEne2&quot;:0,&quot;cero1&quot;:0,&quot;cero2&quot;:0,&quot;cero3&quot;:0,&quot;cero4&quot;:0}" mimeType="application/json" doc:name="SandBags lv1"/>
+        <json:json-to-object-transformer returnClass="topModels.Items" doc:name="JSON to Object"/>
+        <set-variable variableName="itemAdded1" value="#[payload]" doc:name="Set itemAdded1"/>
+        <set-payload value="{&quot;itemId&quot;:227,&quot;itemAmount&quot;:10,&quot;itemDur1&quot;:0,&quot;itemDur2&quot;:0,&quot;itemEne1&quot;:0,&quot;itemEne2&quot;:0,&quot;cero1&quot;:0,&quot;cero2&quot;:0,&quot;cero3&quot;:0,&quot;cero4&quot;:0}" mimeType="application/json" doc:name="Fairy Rations"/>
+        <json:json-to-object-transformer returnClass="topModels.Items" doc:name="JSON to Object"/>
+        <set-variable variableName="itemAdded2" value="#[payload]" doc:name="Set itemAdded2"/>
+        <set-payload value="{&quot;itemId&quot;:3844,&quot;itemAmount&quot;:2,&quot;itemDur1&quot;:0,&quot;itemDur2&quot;:0,&quot;itemEne1&quot;:0,&quot;itemEne2&quot;:0,&quot;cero1&quot;:0,&quot;cero2&quot;:0,&quot;cero3&quot;:0,&quot;cero4&quot;:0}" mimeType="application/json" doc:name="Haven's Berry"/>
+        <json:json-to-object-transformer returnClass="topModels.Items" doc:name="JSON to Object"/>
+        <set-variable variableName="itemAdded3" value="#[payload]" doc:name="Set itemAdded3"/>
+    </sub-flow>
+    <sub-flow name="itemsToAddlv55">
+
+        <set-payload value="{&quot;itemId&quot;:1145,&quot;itemAmount&quot;:1,&quot;itemDur1&quot;:0,&quot;itemDur2&quot;:0,&quot;itemEne1&quot;:0,&quot;itemEne2&quot;:0,&quot;cero1&quot;:0,&quot;cero2&quot;:0,&quot;cero3&quot;:0,&quot;cero4&quot;:0}" mimeType="application/json" doc:name="SandBags lv1"/>
+        <json:json-to-object-transformer returnClass="topModels.Items" doc:name="JSON to Object"/>
+        <set-variable variableName="itemAdded1" value="#[payload]" doc:name="Set itemAdded1"/>
+        <set-payload value="{&quot;itemId&quot;:227,&quot;itemAmount&quot;:15,&quot;itemDur1&quot;:0,&quot;itemDur2&quot;:0,&quot;itemEne1&quot;:0,&quot;itemEne2&quot;:0,&quot;cero1&quot;:0,&quot;cero2&quot;:0,&quot;cero3&quot;:0,&quot;cero4&quot;:0}" mimeType="application/json" doc:name="Fairy Rations"/>
+        <json:json-to-object-transformer returnClass="topModels.Items" doc:name="JSON to Object"/>
+        <set-variable variableName="itemAdded2" value="#[payload]" doc:name="Set itemAdded2"/>
+        <set-payload value="{&quot;itemId&quot;:849,&quot;itemAmount&quot;:1,&quot;itemDur1&quot;:0,&quot;itemDur2&quot;:0,&quot;itemEne1&quot;:0,&quot;itemEne2&quot;:0,&quot;cero1&quot;:0,&quot;cero2&quot;:0,&quot;cero3&quot;:0,&quot;cero4&quot;:0}" mimeType="application/json" doc:name="Nanas"/>
+        <json:json-to-object-transformer returnClass="topModels.Items" doc:name="JSON to Object"/>
+        <set-variable variableName="itemAdded3" value="#[payload]" doc:name="Set itemAdded3"/>
+        <set-payload value="{&quot;itemId&quot;:2729,&quot;itemAmount&quot;:1,&quot;itemDur1&quot;:0,&quot;itemDur2&quot;:0,&quot;itemEne1&quot;:0,&quot;itemEne2&quot;:0,&quot;cero1&quot;:0,&quot;cero2&quot;:0,&quot;cero3&quot;:0,&quot;cero4&quot;:0}" mimeType="application/json" doc:name="Sand Bag lv2"/>
+        <json:json-to-object-transformer returnClass="topModels.Items" doc:name="JSON to Object"/>
+        <set-variable variableName="itemAdded4" value="#[payload]" doc:name="Set itemAdded4"/>
+    </sub-flow>
+    <sub-flow name="itemsToAddlv65">
+
+        <set-payload value="{&quot;itemId&quot;:2729,&quot;itemAmount&quot;:3,&quot;itemDur1&quot;:0,&quot;itemDur2&quot;:0,&quot;itemEne1&quot;:0,&quot;itemEne2&quot;:0,&quot;cero1&quot;:0,&quot;cero2&quot;:0,&quot;cero3&quot;:0,&quot;cero4&quot;:0}" mimeType="application/json" doc:name="SandBags lv2"/>
+        <json:json-to-object-transformer returnClass="topModels.Items" doc:name="JSON to Object"/>
+        <set-variable variableName="itemAdded1" value="#[payload]" doc:name="Set itemAdded1"/>
+        <set-payload value="{&quot;itemId&quot;:227,&quot;itemAmount&quot;:20,&quot;itemDur1&quot;:0,&quot;itemDur2&quot;:0,&quot;itemEne1&quot;:0,&quot;itemEne2&quot;:0,&quot;cero1&quot;:0,&quot;cero2&quot;:0,&quot;cero3&quot;:0,&quot;cero4&quot;:0}" mimeType="application/json" doc:name="Fairy Rations"/>
+        <json:json-to-object-transformer returnClass="topModels.Items" doc:name="JSON to Object"/>
+        <set-variable variableName="itemAdded2" value="#[payload]" doc:name="Set itemAdded2"/>
+        <set-payload value="{&quot;itemId&quot;:849,&quot;itemAmount&quot;:1,&quot;itemDur1&quot;:0,&quot;itemDur2&quot;:0,&quot;itemEne1&quot;:0,&quot;itemEne2&quot;:0,&quot;cero1&quot;:0,&quot;cero2&quot;:0,&quot;cero3&quot;:0,&quot;cero4&quot;:0}" mimeType="application/json" doc:name="Nanas"/>
+        <json:json-to-object-transformer returnClass="topModels.Items" doc:name="JSON to Object"/>
+        <set-variable variableName="itemAdded3" value="#[payload]" doc:name="Set itemAdded3"/>
+        <set-payload value="{&quot;itemId&quot;:3845,&quot;itemAmount&quot;:2,&quot;itemDur1&quot;:0,&quot;itemDur2&quot;:0,&quot;itemEne1&quot;:0,&quot;itemEne2&quot;:0,&quot;cero1&quot;:0,&quot;cero2&quot;:0,&quot;cero3&quot;:0,&quot;cero4&quot;:0}" mimeType="application/json" doc:name="Charmed Berry"/>
+        <json:json-to-object-transformer returnClass="topModels.Items" doc:name="JSON to Object"/>
+        <set-variable variableName="itemAdded4" value="#[payload]" doc:name="Set itemAdded4"/>
+        <set-payload value="{&quot;itemId&quot;:3094,&quot;itemAmount&quot;:1,&quot;itemDur1&quot;:0,&quot;itemDur2&quot;:0,&quot;itemEne1&quot;:0,&quot;itemEne2&quot;:0,&quot;cero1&quot;:0,&quot;cero2&quot;:0,&quot;cero3&quot;:0,&quot;cero4&quot;:0}" mimeType="application/json" doc:name="Amplifier of Strive"/>
+        <json:json-to-object-transformer returnClass="topModels.Items" doc:name="JSON to Object"/>
+        <set-variable variableName="itemAdded5" value="#[payload]" doc:name="Set itemAdded5"/>
+    </sub-flow>
+</mule>

@@ -1,0 +1,363 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:json="http://www.mulesoft.org/schema/mule/json"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd">
+	<flow name="getCharacters">
+		<http:listener config-ref="HTTP_Listener_Configuration"
+			path="/getCharacters" allowedMethods="GET" doc:name="HTTP" />
+		<set-variable variableName="User"
+			value="#[message.inboundProperties.'User']" doc:name="Set User" />
+		<set-variable variableName="Pass"
+			value="#[message.inboundProperties.'Pass']" doc:name="Set Pass" />
+		<set-variable variableName="apiKeyRecieved"
+			value="#[message.inboundProperties.'Key']" doc:name="Set apiKeyRecieved" />
+		<set-variable variableName="apiKey" value="${api.key}"
+			doc:name="Get apiKey" />
+		<expression-component doc:name="Decrypt Key"><![CDATA[flowVars.apiKeyRecieved = topServices.Security.Decrypt(flowVars.apiKeyRecieved)]]></expression-component>
+		<expression-filter expression="#[flowVars.apiKey == flowVars.apiKeyRecieved]"
+			doc:name="Expression" />
+		<db:select config-ref="Generic_Database_Configuration"
+			doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT id
+      ,name
+      ,password
+      ,login_status
+  FROM AccountServer.dbo.account_login
+  WHERE name = #[flowVars.User] and password = #[flowVars.Pass]]]></db:parameterized-query>
+		</db:select>
+		<choice doc:name="Choice">
+			<when
+				expression="#[payload.size() &gt; 0 &amp;&amp; flowVars.User == payload[0].name &amp;&amp; flowVars.Pass == payload[0].password]">
+				<db:select config-ref="Generic_Database_Configuration"
+					doc:name="Database">
+                    <db:parameterized-query><![CDATA[SELECT 
+      cha_ids
+FROM GameDB.dbo.account
+WHERE act_name = #[flowVars.User]]]></db:parameterized-query>
+				</db:select>
+				<choice doc:name="Choice">
+					<when expression="#[payload[0].cha_ids != &quot;;&quot;]">
+						<expression-component doc:name="Expression"><![CDATA[payload = payload[0];
+payload = topServices.CharParser.parseIds(payload.cha_ids);]]></expression-component>
+						<choice doc:name="Choice">
+							<when expression="#[payload.size() &gt;= 1]">
+								<foreach doc:name="For Each">
+									<db:select config-ref="Generic_Database_Configuration"
+										doc:name="Database">
+										<db:parameterized-query><![CDATA[SELECT [cha_id]
+      ,[cha_name]
+      ,[motto]
+      ,[icon]
+      ,[version]
+      ,[pk_ctrl]
+      ,[mem_addr]
+      ,[act_id]
+      ,[guild_id]
+      ,[guild_stat]
+      ,[guild_permission]
+      ,[job]
+      ,[degree]
+      ,[exp]
+      ,[hp]
+      ,[sp]
+      ,[ap]
+      ,[tp]
+      ,[gd]
+      ,[str]
+      ,[dex]
+      ,[agi]
+      ,[con]
+      ,[sta]
+      ,[luk]
+      ,[sail_lv]
+      ,[sail_exp]
+      ,[sail_left_exp]
+      ,[live_lv]
+      ,[live_exp]
+      ,[map]
+      ,[map_x]
+      ,[map_y]
+      ,[radius]
+      ,[angle]
+      ,[look]
+      ,[kb_capacity]
+      ,[kitbag]
+      ,[skillbag]
+      ,[shortcut]
+      ,[mission]
+      ,[misrecord]
+      ,[mistrigger]
+      ,[miscount]
+      ,[birth]
+      ,[login_cha]
+      ,[live_tp]
+      ,[map_mask]
+      ,[delflag]
+      ,[operdate]
+      ,[deldate]
+      ,[main_map]
+      ,[skill_state]
+      ,[bank]
+      ,[estop]
+      ,[estoptime]
+      ,[kb_locked]
+      ,[kitbag_tmp]
+      ,[credit]
+      ,[store_item]
+      ,[extend]
+  FROM [GameDB].[dbo].[character]
+  WHERE cha_id = #[payload]]]></db:parameterized-query>
+									</db:select>
+                                    <expression-component doc:name="Expression"><![CDATA[payload == payload[0];]]></expression-component>
+									<json:object-to-json-transformer
+										doc:name="Object to JSON" />
+									<choice doc:name="Choice">
+										<when expression="#[flowVars.charInfo == null]">
+											<set-variable variableName="charInfo" value="#[payload]"
+												doc:name="Set charInfo" />
+										</when>
+										<otherwise>
+											<set-variable variableName="charInfo"
+												value="#[flowVars.charInfo] , #[payload]" doc:name="Set charInfo" />
+										</otherwise>
+									</choice>
+								</foreach>
+								<set-payload value="[ #[flowVars.charInfo] ]"
+									mimeType="application/json" doc:name="Set Payload" />
+								<logger message="Characters Retrieved" level="INFO"
+									doc:name="Logger" />
+							</when>
+							<otherwise>
+								<set-payload value="No characters found." doc:name="Set Payload" />
+								<set-property propertyName="http.status" value="#[201]"
+									doc:name="Property" />
+							</otherwise>
+						</choice>
+					</when>
+					<otherwise>
+						<set-payload value="No characters found." doc:name="Set Payload" />
+						<set-property propertyName="http.status" value="#[201]"
+							doc:name="Property" />
+					</otherwise>
+				</choice>
+			</when>
+			<otherwise>
+				<set-payload value="This account is not yours "
+					doc:name="Set Payload" />
+				<set-property propertyName="http.status" value="#[201]"
+					doc:name="Property" />
+			</otherwise>
+		</choice>
+	</flow>
+	<flow name="getCharInventory">
+		<http:listener config-ref="HTTP_Listener_Configuration"
+			path="/getCharInventory" allowedMethods="POST" doc:name="HTTP" />
+		<json:json-to-object-transformer
+			returnClass="java.util.HashMap" doc:name="JSON to Object" />
+		<set-variable variableName="saveMessage" value="#[payload.toString()]"
+			doc:name="Set saveMessage" />
+		<expression-component doc:name="Expression"><![CDATA[payload.charId = org.mule.util.StringUtils.replace(payload.charId,"'","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId," ","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId,"=","");]]></expression-component>
+		<choice doc:name="Choice">
+			<when expression="#[payload.toString() != flowVars.saveMessage]">
+				<logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+			</when>
+			<otherwise>
+				<logger message="No special chars detected." level="INFO"
+					doc:name="Logger" />
+			</otherwise>
+		</choice>
+		<set-variable variableName="charId" value="#[payload.charId]"
+			doc:name="Set charId" />
+		<flow-ref name="checkChar" doc:name="checkChar" />
+		<choice doc:name="Choice">
+			<when expression="#[flowVars.charChecked == 1]">
+				<db:select config-ref="Generic_Database_Configuration"
+					doc:name="Database">
+					<db:parameterized-query><![CDATA[SELECT 
+      cha_id,
+      type_id,
+      content
+FROM GameDB.dbo.Resource
+WHERE cha_id = #[flowVars.charId] AND type_id = #[flowVars.stallInvType]]]></db:parameterized-query>
+				</db:select>
+				<expression-component doc:name="Expression"><![CDATA[payload = topServices.CharParser.parseInv(payload[0].content);
+flowVars.decodedInv = topServices.CharParser.decryptInv(payload[2],'19800216');
+payload = topServices.CharParser.getInventory(payload[0],payload[1],flowVars.decodedInv);
+payload = payload.items;]]></expression-component>
+				<choice doc:name="Choice">
+					<when expression="#[payload.size() &gt; 0]">
+						<foreach doc:name="For Each">
+							<set-payload
+								value="{ &quot;itemId&quot;: #[payload.itemId], &quot;itemAmount&quot;: #[payload.itemAmount] }"
+								doc:name="Set Payload" />
+							<choice doc:name="Choice">
+								<when expression="#[flowVars.itemString == null]">
+									<set-variable variableName="itemString" value="#[payload]"
+										doc:name="Set itemString" />
+								</when>
+								<otherwise>
+									<set-variable variableName="itemString"
+										value="#[flowVars.itemString], #[payload]" doc:name="Set itemString" />
+								</otherwise>
+							</choice>
+						</foreach>
+						<set-payload value="[ #[flowVars.itemString] ]"
+							mimeType="application/json" doc:name="Set Payload" />
+					</when>
+					<otherwise>
+						<set-payload value="Your character has no items."
+							doc:name="Set Payload" />
+						<set-property propertyName="http.status" value="#[201]"
+							doc:name="Property" />
+					</otherwise>
+				</choice>
+			</when>
+			<otherwise>
+                <set-payload value="This character is not yours." doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+			</otherwise>
+		</choice>
+	</flow>
+	<flow name="removeItemFromInv">
+		<db:select config-ref="Generic_Database_Configuration"
+			doc:name="Database">
+			<db:parameterized-query><![CDATA[SELECT 
+      cha_id,
+      type_id,
+      content
+FROM GameDB.dbo.Resource
+WHERE cha_id = #[flowVars.charId] AND type_id = #[flowVars.stallInvType]]]></db:parameterized-query>
+		</db:select>
+		<expression-component doc:name="Expression"><![CDATA[payload = topServices.CharParser.parseInv(payload[0].content);
+flowVars.decodedInv = topServices.CharParser.decryptInv(payload[2],'19800216');
+payload = topServices.CharParser.getInventory(payload[0],payload[1],flowVars.decodedInv);
+flowVars.newInv = topServices.CharParser.removeItemInventory(payload,flowVars.itemId,flowVars.itemAmount);
+payload = flowVars.newInv.Items;
+]]></expression-component>
+		<choice doc:name="Choice">
+			<when expression="#[payload.size() &gt; 0]">
+				<foreach doc:name="For Each">
+					<choice doc:name="Choice">
+						<when expression="#[payload.cero4 == 0]">
+							<set-payload
+								value="#[payload.itemIndex],#[payload.itemId],#[payload.itemAmount],#[payload.itemDur1],#[payload.itemDur2],#[payload.itemEne1],#[payload.itemEne2],#[payload.cero1],#[payload.cero2],#[payload.cero3],#[payload.cero4];"
+								doc:name="Set Payload" />
+						</when>
+						<otherwise>
+							<set-payload
+								value="#[payload.itemIndex],#[payload.itemId],#[payload.itemAmount],#[payload.itemDur1],#[payload.itemDur2],#[payload.itemEne1],#[payload.itemEne2],#[payload.cero1],#[payload.cero2],#[payload.cero3],#[payload.cero4],#[payload.attr1],#[payload.attr2],#[payload.attr3],#[payload.attr4],#[payload.attr5],#[payload.attr6],#[payload.attr7],#[payload.attr8],#[payload.attr9],#[payload.attr10];"
+								doc:name="Set Payload" />
+						</otherwise>
+					</choice>
+					<choice doc:name="Choice">
+						<when expression="#[flowVars.itemString2 == null]">
+							<set-variable variableName="itemString2" value="#[payload]"
+								doc:name="Set itemString2" />
+						</when>
+						<otherwise>
+							<set-variable variableName="itemString2"
+								value="#[flowVars.itemString2]#[payload]" doc:name="Set itemString2" />
+						</otherwise>
+					</choice>
+				</foreach>
+				<expression-component doc:name="Expression"><![CDATA[payload = flowVars.newInv;]]></expression-component>
+				<set-payload
+					value="#[payload.type];#[payload.size];#[flowVars.itemString2]#[payload.crc]"
+					doc:name="Set Payload" />
+				<expression-component doc:name="Expression"><![CDATA[flowVars.encryptedInv = topServices.CharParser.encryptInv(payload,'19800216');
+payload = flowVars.newInv;
+
+
+]]></expression-component>
+				<set-payload
+					value="#[payload.maxSize]@#[payload.no]##[flowVars.encryptedInv]"
+					doc:name="Set Payload" />
+			</when>
+			<otherwise>
+				<set-payload value="16@113#bthka" doc:name="Set Payload" />
+			</otherwise>
+		</choice>
+		<db:update config-ref="Generic_Database_Configuration"
+			doc:name="Database">
+			<db:parameterized-query><![CDATA[UPDATE GameDB.dbo.Resource SET content = #[payload] WHERE cha_id = #[flowVars.charId] AND type_id = #[flowVars.stallInvType]]]></db:parameterized-query>
+		</db:update>
+		<set-payload value="#[1]" doc:name="Set Payload" />
+		<catch-exception-strategy doc:name="Catch Exception Strategy">
+			<set-payload value="#[0]" doc:name="Set Payload" />
+		</catch-exception-strategy>
+	</flow>
+	<sub-flow name="checkInvForItem">
+		<db:select config-ref="Generic_Database_Configuration"
+			doc:name="Database">
+			<db:parameterized-query><![CDATA[SELECT 
+      cha_id,
+      type_id,
+      content
+FROM GameDB.dbo.Resource
+WHERE cha_id = #[flowVars.charId] AND type_id = #[flowVars.stallInvType]]]></db:parameterized-query>
+		</db:select>
+		<expression-component doc:name="Expression"><![CDATA[payload = topServices.CharParser.parseInv(payload[0].content);
+flowVars.decodedInv = topServices.CharParser.decryptInv(payload[2],'19800216');
+payload = topServices.CharParser.getInventory(payload[0],payload[1],flowVars.decodedInv);
+payload = payload.items;
+]]></expression-component>
+		<foreach doc:name="For Each">
+			<choice doc:name="Choice">
+				<when expression="#[payload.itemId == flowVars.itemId]">
+					<choice doc:name="Choice">
+						<when expression="#[payload.itemAmount &gt;= flowVars.itemAmount]">
+							<set-variable variableName="itemChecked" value="#[1]"
+								doc:name="Set itemChecked" />
+						</when>
+						<otherwise>
+							<choice doc:name="Choice">
+								<when expression="#[flowVars.itemChecked != 1]">
+									<set-variable variableName="itemChecked" value="#[0]"
+										doc:name="Set itemChecked" />
+									<choice doc:name="Choice">
+										<when expression="#[flowVars.itemAmounts == null]">
+											<set-variable variableName="itemAmounts"
+												value="#[payload.itemAmount]" doc:name="Set itemAmounts" />
+										</when>
+										<otherwise>
+											<set-variable variableName="itemAmounts"
+												value="#[flowVars.itemAmounts], #[payload.itemAmount]"
+												doc:name="Set itemAmounts" />
+										</otherwise>
+									</choice>
+								</when>
+								<otherwise>
+									<logger message="Item Already Found" level="INFO"
+										doc:name="Logger" />
+								</otherwise>
+							</choice>
+						</otherwise>
+					</choice>
+				</when>
+				<otherwise>
+					<choice doc:name="Choice">
+						<when expression="#[flowVars.itemChecked != 1]">
+							<set-variable variableName="itemChecked" value="#[0]"
+								doc:name="Set itemChecked" />
+						</when>
+						<otherwise>
+							<logger message="Item Already Found" level="INFO"
+								doc:name="Logger" />
+						</otherwise>
+					</choice>
+				</otherwise>
+			</choice>
+		</foreach>
+	</sub-flow>
+</mule>

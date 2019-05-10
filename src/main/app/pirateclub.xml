@@ -1,0 +1,411 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd">
+    <flow name="getClubs">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/getClubs" allowedMethods="GET" doc:name="HTTP"/>
+        <logger message="Incomeing Ip #[message.inboundProperties.'http.remote.address']" level="INFO" doc:name="Logger"/>
+        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT * FROM PirateClub.dbo.Clubs]]></db:parameterized-query>
+        </db:select>
+        <json:object-to-json-transformer doc:name="Object to JSON"/>
+        <logger level="INFO" doc:name="Logger"/>
+    </flow>
+    <flow name="getCharClubs">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/getCharClubs" allowedMethods="POST" doc:name="HTTP"/>
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveMessage" value="#[payload.toString()]" doc:name="Set saveMessage"/>
+        <expression-component doc:name="Expression"><![CDATA[payload.charId = org.mule.util.StringUtils.replace(payload.charId,"'","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId," ","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId,"=","");]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.toString() != flowVars.saveMessage]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <set-variable variableName="charId" value="#[payload.charId]" doc:name="Set charId"/>
+        <flow-ref name="checkChar" doc:name="checkChar"/>
+        <choice doc:name="Choice">
+            <when expression="#[flowVars.charChecked == 1]">
+                <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+                    <db:parameterized-query><![CDATA[SELECT * FROM PirateClub.dbo.Signed WHERE signed_chaid = #[flowVars.charId]]]></db:parameterized-query>
+                </db:select>
+                <choice doc:name="Choice">
+                    <when expression="#[payload.size() &gt; 0]">
+                        <foreach doc:name="For Each">
+                            <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+                                <db:parameterized-query><![CDATA[SELECT * FROM PirateClub.dbo.Clubs WHERE club_id = #[payload.signed_clubid]]]></db:parameterized-query>
+                            </db:select>
+                            <choice doc:name="Choice">
+                                <when expression="#[payload.size() &gt; 0]">
+                                    <expression-component doc:name="Expression"><![CDATA[payload = payload[0]]]></expression-component>
+                                    <json:object-to-json-transformer doc:name="Object to JSON"/>
+                                    <choice doc:name="Choice">
+                                        <when expression="#[flowVars.clubInfo == null]">
+                                            <set-variable variableName="clubInfo" value="#[payload]" doc:name="Set clubInfo"/>
+                                        </when>
+                                        <otherwise>
+                                            <set-variable variableName="clubInfo" value="#[flowVars.clubInfo],#[payload]" doc:name="Set clubInfo"/>
+                                        </otherwise>
+                                    </choice>
+                                </when>
+                                <otherwise>
+                                    <logger message="Club not found" level="INFO" doc:name="Logger"/>
+                                </otherwise>
+                            </choice>
+                        </foreach>
+                        <choice doc:name="Choice">
+                            <when expression="#[flowVars.clubInfo != null]">
+                                <set-payload value="[#[flowVars.clubInfo]]" mimeType="application/json" doc:name="Set Payload"/>
+                            </when>
+                            <otherwise>
+                                <set-payload value="[]" mimeType="application/json" doc:name="Set Payload"/>
+                            </otherwise>
+                        </choice>
+                    </when>
+                    <otherwise>
+                        <set-payload value="[]" mimeType="application/json" doc:name="Set Payload"/>
+                    </otherwise>
+                </choice>
+            </when>
+            <otherwise>
+                <set-payload value="This character is not yours" doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[202]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+    <flow name="applyForClub">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/applyClub" allowedMethods="POST" doc:name="HTTP"/>
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveMessage" value="#[payload.toString()]" doc:name="Set saveMessage"/>
+        <expression-component doc:name="Expression"><![CDATA[payload.charId = org.mule.util.StringUtils.replace(payload.charId,"'","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId," ","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId,"=","");
+
+payload.clubId = org.mule.util.StringUtils.replace(payload.clubId,"'","");
+payload.clubId = org.mule.util.StringUtils.replace(payload.clubId," ","");
+payload.clubId = org.mule.util.StringUtils.replace(payload.clubId,"=","");]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.toString() != flowVars.saveMessage]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <set-variable variableName="charId" value="#[payload.charId]" doc:name="Set charId"/>
+        <flow-ref name="checkChar" doc:name="checkChar"/>
+        <choice doc:name="Choice">
+            <when expression="#[flowVars.charChecked == 1]">
+                <set-variable variableName="clubId" value="#[payload.clubId]" doc:name="Set clubId"/>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.clubDetails]" doc:name="Database">
+                    <db:parameterized-query><![CDATA[SELECT club_name, club_leadername, club_lvl FROM PirateClub.dbo.Clubs WHERE club_id = #[flowVars.clubId]]]></db:parameterized-query>
+                </db:select>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.charLvl]" doc:name="Database">
+                    <db:parameterized-query><![CDATA[SELECT degree FROM GameDB.dbo.character WHERE cha_id = #[flowVars.charId]]]></db:parameterized-query>
+                </db:select>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.signedCheck]" doc:name="Database">
+                    <db:parameterized-query><![CDATA[SELECT * FROM PirateClub.dbo.Signed WHERE signed_chaid = #[flowVars.charId] AND signed_clublvl = #[flowVars.clubDetails[0].club_lvl]]]></db:parameterized-query>
+                </db:select>
+                <choice doc:name="Choice">
+                    <when expression="#[flowVars.signedCheck.size() == 0]">
+                        <choice doc:name="Choice">
+                            <when expression="#[flowVars.charLvl[0].degree &lt; flowVars.clubDetails[0].club_lvl]">
+                                <db:insert config-ref="Generic_Database_Configuration" doc:name="Database">
+                                    <db:parameterized-query><![CDATA[INSERT INTO [PirateClub].[dbo].[Signed] (signed_chaid, signed_chalv, signed_clubid, signed_clublvl) VALUES (#[flowVars.charId], #[flowVars.charLvl[0].degree], #[flowVars.clubId], #[flowVars.clubDetails[0].club_lvl]);]]></db:parameterized-query>
+                                </db:insert>
+                                <set-payload value="Applied Successfully" doc:name="Set Payload"/>
+                            </when>
+                            <otherwise>
+                                <set-payload value="Your character level is too high to apply for this Pirate Club" doc:name="Set Payload"/>
+                                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                            </otherwise>
+                        </choice>
+                    </when>
+                    <otherwise>
+                        <set-payload value="You are already signed in a Pirate Club." doc:name="Set Payload"/>
+                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                    </otherwise>
+                </choice>
+            </when>
+            <otherwise>
+                <set-payload value="This character is not yours" doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[202]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+    <flow name="getOwnedClubs">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/getOwnedClubs" allowedMethods="POST" doc:name="HTTP"/>
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveMessage" value="#[payload.toString()]" doc:name="Set saveMessage"/>
+        <expression-component doc:name="Expression"><![CDATA[payload.charId = org.mule.util.StringUtils.replace(payload.charId,"'","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId," ","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId,"=","");]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.toString() != flowVars.saveMessage]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <set-variable variableName="charId" value="#[payload.charId]" doc:name="Set charId"/>
+        <flow-ref name="checkChar" doc:name="checkChar"/>
+        <choice doc:name="Choice">
+            <when expression="#[flowVars.charChecked == 1]">
+                <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+                    <db:parameterized-query><![CDATA[SELECT * FROM PirateClub.dbo.Clubs WHERE club_leaderid = #[flowVars.charId]]]></db:parameterized-query>
+                </db:select>
+                <choice doc:name="Choice">
+                    <when expression="#[payload.size() &gt; 0]">
+                        <json:object-to-json-transformer doc:name="Object to JSON"/>
+                        <logger level="INFO" doc:name="Logger"/>
+                    </when>
+                    <otherwise>
+                        <set-payload value="You dont have any Pirate Club" doc:name="Set Payload"/>
+                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                    </otherwise>
+                </choice>
+            </when>
+            <otherwise>
+                <set-payload value="This character is not yours" doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[202]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+    <flow name="deleteOwnClub">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/deleteClub" doc:name="HTTP" allowedMethods="POST"/>
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveMessage" value="#[payload.toString()]" doc:name="Set saveMessage"/>
+        <expression-component doc:name="Expression"><![CDATA[payload.charId = org.mule.util.StringUtils.replace(payload.charId,"'","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId," ","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId,"=","");
+
+payload.clubId = org.mule.util.StringUtils.replace(payload.clubId,"'","");
+payload.clubId = org.mule.util.StringUtils.replace(payload.clubId," ","");
+payload.clubId = org.mule.util.StringUtils.replace(payload.clubId,"=","");]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.toString() != flowVars.saveMessage]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <set-variable variableName="charId" value="#[payload.charId]" doc:name="Set charId"/>
+        <flow-ref name="checkChar" doc:name="checkChar"/>
+        <choice doc:name="Choice">
+            <when expression="#[flowVars.charChecked == 1]">
+                <set-variable variableName="clubId" value="#[payload.clubId]" doc:name="Set clubId"/>
+                <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+                    <db:parameterized-query><![CDATA[SELECT * FROM PirateClub.dbo.Clubs WHERE club_id = #[flowVars.clubId] AND club_leaderid = #[flowVars.charId]]]></db:parameterized-query>
+                </db:select>
+                <choice doc:name="Choice">
+                    <when expression="#[payload.size() &gt; 0]">
+                        <db:delete config-ref="Generic_Database_Configuration" doc:name="Database">
+                            <db:parameterized-query><![CDATA[DELETE FROM PirateClub.dbo.Clubs WHERE club_id = #[flowVars.clubId] AND club_leaderid = #[flowVars.charId]]]></db:parameterized-query>
+                        </db:delete>
+                        <db:delete config-ref="Generic_Database_Configuration" doc:name="Database">
+                            <db:parameterized-query><![CDATA[DELETE FROM PirateClub.dbo.Signed WHERE signed_clubid = #[payload.clubId]]]></db:parameterized-query>
+                        </db:delete>
+                        <set-payload value="You disbanded this club" doc:name="Set Payload"/>
+                    </when>
+                    <otherwise>
+                        <set-payload value="This Pirate Club is not yours." doc:name="Set Payload"/>
+                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                    </otherwise>
+                </choice>
+            </when>
+            <otherwise>
+                <set-payload value="This character is not yours" doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[202]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+    <flow name="leaveClub">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/leaveClub" allowedMethods="POST" doc:name="HTTP"/>
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveMessage" value="#[payload.toString()]" doc:name="Set saveMessage"/>
+        <expression-component doc:name="Expression"><![CDATA[payload.charId = org.mule.util.StringUtils.replace(payload.charId,"'","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId," ","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId,"=","");
+
+payload.clubId = org.mule.util.StringUtils.replace(payload.clubId,"'","");
+payload.clubId = org.mule.util.StringUtils.replace(payload.clubId," ","");
+payload.clubId = org.mule.util.StringUtils.replace(payload.clubId,"=","");]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.toString() != flowVars.saveMessage]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <set-variable variableName="charId" value="#[payload.charId]" doc:name="Set charId"/>
+        <flow-ref name="checkChar" doc:name="checkChar"/>
+        <choice doc:name="Choice">
+            <when expression="#[flowVars.charChecked == 1]">
+                <set-variable variableName="clubId" value="#[payload.clubId]" doc:name="Set clubId"/>
+                <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+                    <db:parameterized-query><![CDATA[SELECT * FROM PirateClub.dbo.Signed WHERE signed_chaid = #[flowVars.charId] AND signed_clubid = #[flowVars.clubId]]]></db:parameterized-query>
+                </db:select>
+                <choice doc:name="Choice">
+                    <when expression="#[payload.size() &gt; 0]">
+                        <db:delete config-ref="Generic_Database_Configuration" doc:name="Database">
+                            <db:parameterized-query><![CDATA[DELETE FROM PirateClub.dbo.Signed WHERE signed_chaid = #[flowVars.charId] AND signed_clubid = #[flowVars.clubId]]]></db:parameterized-query>
+                        </db:delete>
+                        <set-payload value="You left this club" doc:name="Set Payload"/>
+                    </when>
+                    <otherwise>
+                        <set-payload value="You are not applied to this club." doc:name="Set Payload"/>
+                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                    </otherwise>
+                </choice>
+            </when>
+            <otherwise>
+                <set-payload value="This character is not yours" doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[202]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+    <flow name="createClub">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/createClub" allowedMethods="POST" doc:name="HTTP"/>
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveMessage" value="#[payload.toString()]" doc:name="Set saveMessage"/>
+        <expression-component doc:name="Expression"><![CDATA[payload.club_leaderid = org.mule.util.StringUtils.replace(payload.club_leaderid,"'","");
+payload.club_leaderid = org.mule.util.StringUtils.replace(payload.club_leaderid," ","");
+payload.club_leaderid = org.mule.util.StringUtils.replace(payload.club_leaderid,"=","");
+
+payload.club_lvl = org.mule.util.StringUtils.replace(payload.club_lvl,"'","");
+payload.club_lvl = org.mule.util.StringUtils.replace(payload.club_lvl," ","");
+payload.club_lvl = org.mule.util.StringUtils.replace(payload.club_lvl,"=","");
+
+payload.club_name = org.mule.util.StringUtils.replace(payload.club_name,"'","");
+payload.club_name = org.mule.util.StringUtils.replace(payload.club_name," ","");
+payload.club_name = org.mule.util.StringUtils.replace(payload.club_name,"=","");
+
+payload.club_leadername = org.mule.util.StringUtils.replace(payload.club_leadername,"'","");
+payload.club_leadername = org.mule.util.StringUtils.replace(payload.club_leadername," ","");
+payload.club_leadername = org.mule.util.StringUtils.replace(payload.club_leadername,"=","");]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.toString() != flowVars.saveMessage]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <set-variable variableName="charId" value="#[payload.club_leaderid]" doc:name="Set charId"/>
+        <flow-ref name="checkChar" doc:name="checkChar"/>
+
+        <choice doc:name="Choice">
+            <when expression="#[flowVars.charChecked == 1]">
+                <set-variable variableName="clubInfo" value="#[payload]" doc:name="Set clubInfo"/>
+                <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+                    <db:parameterized-query><![CDATA[SELECT degree FROM GameDB.dbo.character WHERE cha_id = #[flowVars.charId]]]></db:parameterized-query>
+                </db:select>
+                <choice doc:name="Choice">
+                    <when expression="#[payload[0].degree &gt; flowVars.clubInfo.club_lvl]">
+                        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+                            <db:parameterized-query><![CDATA[SELECT * FROM PirateClub.dbo.Clubs WHERE club_leaderid = #[flowVars.clubInfo.club_leaderid] AND club_lvl = #[flowVars.clubInfo.club_lvl]]]></db:parameterized-query>
+                        </db:select>
+                        <choice doc:name="Choice">
+                            <when expression="#[payload.size() == 0]">
+                                <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+                                    <db:parameterized-query><![CDATA[SELECT * FROM [PirateClub].[dbo].[Clubs] WHERE club_name = #[flowVars.clubInfo.club_name]]]></db:parameterized-query>
+                                </db:select>
+                                <choice doc:name="Choice">
+                                    <when expression="#[payload.size() == 0]">
+                                        <expression-component doc:name="Expression"><![CDATA[if (flowVars.clubInfo.club_lvl == 45) {
+     flowVars.put("clubLevel", 45);
+ } 
+ else if (flowVars.clubInfo.club_lvl == 55) {
+     flowVars.put("clubLevel", 55);
+ } else if (flowVars.clubInfo.club_lvl == 65) {
+     flowVars.put("clubLevel", 65);
+ } else {
+	flowVars.put("clubLevel", null);
+}]]></expression-component>
+                                        <db:insert config-ref="Generic_Database_Configuration" doc:name="Database">
+                                            <db:parameterized-query><![CDATA[INSERT INTO [PirateClub].[dbo].[Clubs] (club_name, club_leaderid, club_leadername, club_lvl, club_gradChar, club_gradPend) VALUES (#[flowVars.clubInfo.club_name], #[flowVars.clubInfo.club_leaderid], #[flowVars.clubInfo.club_leadername], #[flowVars.clubLevel], 0, 0);]]></db:parameterized-query>
+
+                                        </db:insert>
+                                        <set-payload value="Pirate Club Created Successfully" doc:name="Set Payload"/>
+                                    </when>
+                                    <otherwise>
+                                        <set-payload value="A Pirate Club named #[flowVars.clubInfo.club_name] already exists." doc:name="Set Payload"/>
+                                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                                    </otherwise>
+                                </choice>
+                            </when>
+                            <otherwise>
+                                <set-payload value="You already have a Lv #[payload[0].club_lvl] Club called #[payload[0].club_name]" doc:name="Set Payload"/>
+                                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                            </otherwise>
+                        </choice>
+                    </when>
+                    <otherwise>
+                        <set-payload value="You need to be lvl #[flowVars.clubInfo.club_lvl +1] to create this Club. Your level is #[payload[0].degree]. Keep working" doc:name="Set Payload"/>
+                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                    </otherwise>
+                </choice>
+            </when>
+            <otherwise>
+                <set-payload value="This character is not yours" doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[202]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+</mule>

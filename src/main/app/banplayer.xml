@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd">
+    <flow name="banPlayer">
+        <expression-component doc:name="Expression"><![CDATA[flowVars.savedIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+        <logger message="Ban system excecuted for IP: #[flowVars.savedIp]" level="INFO" doc:name="Logger"/>
+        <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.database4]" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.savedIp]]]></db:parameterized-query>
+        </db:select>
+        <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.database3]" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT name FROM AccountServer.dbo.account_login WHERE last_login_ip = #[flowVars.savedIp]]]></db:parameterized-query>
+        </db:select>
+        <choice doc:name="Choice">
+            <when expression="#[flowVars.database4.size() == 0]">
+                <db:update config-ref="Generic_Database_Configuration" target="#[flowVars.database1]" doc:name="Database">
+                    <db:parameterized-query><![CDATA[UPDATE AccountServer.dbo.account_login
+SET ban = #[1] WHERE last_login_ip = #[flowVars.savedIp]]]></db:parameterized-query>
+                </db:update>
+                <db:insert config-ref="Generic_Database_Configuration" target="#[flowVars.database2]" doc:name="Database">
+                    <db:parameterized-query><![CDATA[INSERT INTO BanRecords.dbo.Banned (ban_ip) VALUES (#[flowVars.savedIp]);]]></db:parameterized-query>
+                </db:insert>
+                <logger message="Banned Accounts: #[flowVars.database3.toString()]" level="INFO" doc:name="Logger"/>
+            </when>
+            <otherwise>
+                <logger message="Ip: #[flowVars.savedIp] has already been banned (Accounts: #[flowVars.database3.toString()])" level="INFO" doc:name="Logger"/>
+            </otherwise>
+        </choice>
+        <expression-filter expression="#[flowVars.database4.size() == 152685]" doc:name="Expression"/>
+        <catch-exception-strategy doc:name="Catch Exception Strategy">
+            <logger message="Ban System failed for IP: #[flowVars.savedIp]" level="INFO" doc:name="Logger"/>
+        </catch-exception-strategy>
+    </flow>
+</mule>

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:cluster="http://www.mulesoft.org/schema/mule/ee/cluster" xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:context="http://www.springframework.org/schema/context" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-current.xsd">
+    <http:listener-config name="HTTP_Listener_Configuration" host="0.0.0.0" port="8082" doc:name="HTTP Listener Configuration"/>
+    <db:generic-config name="Generic_Database_Configuration" url="jdbc:sqlserver://${mssql.ip};user=${mssql.user};password=${mssql.pass};" driverClassName="com.microsoft.sqlserver.jdbc.SQLServerDriver" doc:name="Generic_Database_Configuration"/>
+    <context:property-placeholder location="config/local.properties"/>
+      <configuration doc:name="Configuration2">
+         <expression-language>
+             <import class="java.text.Normalizer" />
+             <global-functions>
+                 	def convertText(data){
+    					String temp = Normalizer.normalize(data, Normalizer.Form.NFD).replaceAll("[^\\p{ASCII}]", "");
+    					return temp;
+					}
+             </global-functions>
+         </expression-language>
+     </configuration>
+    <configuration defaultExceptionStrategy-ref="DefaultExceptionStrategy" doc:name="Configuration">
+        <http:config useTransportForUris="false"/>
+    </configuration>
+    <catch-exception-strategy name="DefaultExceptionStrategy">
+        <set-payload value="Error processing data" doc:name="Set Payload"/>
+        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+    </catch-exception-strategy>
+    <flow name="globalFlow">
+        <poll doc:name="Poll">
+            <fixed-frequency-scheduler frequency="1" timeUnit="HOURS"/>
+            <expression-component doc:name="Expression"><![CDATA[topServices.Security.runGarbage();]]></expression-component>
+        </poll>
+        <logger message="Web Service Memory Redused." level="INFO" doc:name="Logger"/>
+    </flow>
+    
+</mule>

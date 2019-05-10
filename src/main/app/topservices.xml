@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd">
+    
+    <flow name="getAccount">
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT [id]
+      ,[name]
+      ,[password]
+      ,[originalPassword]
+      ,[login_status]
+      ,[last_login_time]
+      ,[last_logout_time]
+      ,[last_login_ip]
+      ,[ban]
+      ,[email]
+  FROM [AccountServer].[dbo].[account_login] WHERE [name] = #[payload.userMod]]]></db:parameterized-query>
+        </db:select>
+        <foreach doc:name="For Each">
+            <json:object-to-json-transformer doc:name="Object to JSON"/>
+            <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+            <set-payload value="{
+&quot;idCode&quot;:&quot;#[payload.id]&quot;,
+&quot;name&quot;:&quot;#[payload.name]&quot;,
+&quot;password&quot;:&quot;#[payload.password]&quot;,
+&quot;originalPassword&quot;:&quot;#[payload.originalPassword]&quot;,
+&quot;loginStatus&quot;:&quot;#[payload.login_status]&quot;,
+&quot;lastLoginTime&quot;:&quot;#[payload.last_login_time]&quot;,
+&quot;lastLogoutTime&quot;:&quot;#[payload.last_logout_time]&quot;,
+&quot;lastLoginIp&quot;:&quot;#[payload.last_login_ip]&quot;,
+&quot;ban&quot;:&quot;#[payload.ban]&quot;,
+&quot;email&quot;:&quot;#[payload.email]&quot;
+}" mimeType="application/json" doc:name="Set Payload"/>
+            <set-variable variableName="payloadBack" value="#[payload]" doc:name="payloadBack"/>
+            <logger message="Info recibida" level="INFO" doc:name="Logger"/>
+        </foreach>
+        <set-payload value="#[flowVars.payloadBack]" doc:name="Set Payload"/>
+    </flow>
+    <flow name="createAccount2">
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveUser" value="#[payload.user]" doc:name="saveUser"/>
+        <set-variable variableName="gmLevel" value="#[payload.gmLevel]" doc:name="gmLevel"/>
+        <db:insert config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[INSERT INTO [AccountServer].[dbo].[account_login] (name, password, originalPassword, email, ban) VALUES (#[payload.user], #[payload.pass], #[payload.oldPass] ,#[payload.email],0);]]></db:parameterized-query>
+        </db:insert>
+        <logger message="Account Created" level="INFO" doc:name="Logger"/>
+        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT MAX(act_id) FROM GameDB.dbo.account]]></db:parameterized-query>
+        </db:select>
+        <foreach doc:name="For Each">
+            <foreach doc:name="For Each">
+                <set-variable variableName="saveId" value="#[payload + 1]" doc:name="saveId"/>
+            </foreach>
+        </foreach>
+        <db:insert config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[INSERT INTO GameDB.dbo.account (act_id, act_name, gm, cha_ids, last_ip, disc_reason, last_leave, password, merge_state) VALUES (#[flowVars.saveId], #[flowVars.saveUser], #[flowVars.gmLevel], ';', ' ', ' ', '2001-01-01 00:00:00.000', null, 0);]]></db:parameterized-query>
+        </db:insert>
+        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT id, name, password, originalPassword, login_status, last_login_time, last_logout_time, last_login_ip, ban, email FROM AccountServer.dbo.account_login WHERE name = #[flowVars.saveUser]]]></db:parameterized-query>
+        </db:select>
+        <foreach doc:name="For Each">
+            <json:object-to-json-transformer doc:name="Object to JSON"/>
+            <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+            <set-payload value="{ &quot;idCode&quot;:&quot;#[payload.id]&quot;, &quot;name&quot;:&quot;#[payload.name]&quot;, &quot;password&quot;:&quot;#[payload.password]&quot;, &quot;originalPassword&quot;:&quot;#[payload.originalPassword]&quot;, &quot;loginStatus&quot;:&quot;#[payload.login_status]&quot;, &quot;lastLoginTime&quot;:&quot;#[payload.last_login_time]&quot;, &quot;lastLogoutTime&quot;:&quot;#[payload.last_logout_time]&quot;, &quot;lastLoginIp&quot;:&quot;#[payload.last_login_ip]&quot;, &quot;ban&quot;:&quot;#[payload.ban]&quot;, &quot;email&quot;:&quot;#[payload.email]&quot; }" mimeType="application/json" doc:name="Set Payload"/>
+            <set-variable variableName="payloadBack" value="#[payload]" doc:name="payloadBack"/>
+            <logger message="Info recibida" level="INFO" doc:name="Logger"/>
+        </foreach>
+        <set-payload value="#[flowVars.payloadBack]" doc:name="Set Payload"/>
+        <catch-exception-strategy doc:name="Catch Exception Strategy">
+            <set-payload value="Nombre de Usuario ya existe" doc:name="Set Payload"/>
+            <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+        </catch-exception-strategy>
+    </flow>
+    <flow name="getChar">
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="name" value="#[payload.charName]" doc:name="name"/>
+        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT cha_id, cha_name, gd, str, dex, agi, con, sta, luk, kb_capacity, credit FROM GameDB.dbo.character WHERE cha_name = #[flowVars.name]]]></db:parameterized-query>
+        </db:select>
+        <foreach doc:name="For Each">
+            <json:object-to-json-transformer doc:name="Object to JSON"/>
+            <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+            <set-payload value="{
+	&quot;idCode&quot;: &quot;#[payload.cha_id]&quot;,
+	&quot;charName&quot;: &quot;#[payload.cha_name]&quot;,
+	&quot;coinsValue&quot;: &quot;#[payload.gd]&quot;,
+	&quot;strValue&quot;: &quot;#[payload.str]&quot;,
+	&quot;dexValue&quot;: &quot;#[payload.dex]&quot;,
+	&quot;agiValue&quot;: &quot;#[payload.agi]&quot;,
+	&quot;conValue&quot;: &quot;#[payload.con]&quot;,
+	&quot;staValue&quot;: &quot;#[payload.sta]&quot;,
+	&quot;lukValue&quot;: &quot;#[payload.luk]&quot;,
+	&quot;kbCapacity&quot;: &quot;#[payload.kb_capacity]&quot;,
+	&quot;repValue&quot;: &quot;#[payload.credit]&quot;
+}" mimeType="application/json" doc:name="Set Payload"/>
+            <set-variable variableName="payloadBack" value="#[payload]" doc:name="payloadBack"/>
+            <logger message="Info recibida" level="INFO" doc:name="Logger"/>
+        </foreach>
+        <set-payload value="#[flowVars.payloadBack]" doc:name="Set Payload"/>
+    </flow>
+    <flow name="updateChar">
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="idCode" value="#[payload.idCode]" doc:name="idCode"/>
+        <db:update config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[UPDATE GameDB.dbo.character SET gd = #[payload.coinsValue], str= #[payload.strValue], dex= #[payload.dexValue], agi= #[payload.agiValue], con= #[payload.conValue], sta= #[payload.staValue], luk= #[payload.lukValue], kb_capacity= #[payload.kbCapacity], credit= #[payload.repValue] WHERE cha_id = #[flowVars.idCode]]]></db:parameterized-query>
+        </db:update>
+        <set-payload value="Character Updated" doc:name="Set Payload"/>
+        <catch-exception-strategy doc:name="Catch Exception Strategy">
+            <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+            <set-payload value="Error updateing Character" doc:name="Set Payload"/>
+        </catch-exception-strategy>
+    </flow>
+</mule>

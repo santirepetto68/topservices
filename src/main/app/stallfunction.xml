@@ -1,0 +1,517 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd">
+    <flow name="getItemDB">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/getItemsDB" allowedMethods="GET" doc:name="HTTP"/>
+        <set-variable variableName="apiKeyRecieved" value="#[message.inboundProperties.'Key']" doc:name="Set apiKeyRecieved"/>
+        <expression-component doc:name="Decrypt Key"><![CDATA[flowVars.apiKeyRecieved = topServices.Security.Decrypt(flowVars.apiKeyRecieved)]]></expression-component>
+        <set-variable variableName="apiKey" value="${api.key}" doc:name="Get apiKey"/>
+        <expression-filter expression="#[flowVars.apiKey == flowVars.apiKeyRecieved]" doc:name="Expression"/>
+        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT * FROM OnlineStall.dbo.ItemsDB]]></db:parameterized-query>
+        </db:select>
+        <json:object-to-json-transformer doc:name="Object to JSON"/>
+        <logger message="Item Database downloaded" level="INFO" doc:name="Logger"/>
+    </flow>
+    <flow name="searchStallItems">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/searchStallItems" allowedMethods="POST" doc:name="HTTP"/>
+        <set-variable variableName="apiKeyRecieved" value="#[message.inboundProperties.'Key']" doc:name="Set apiKeyRecieved"/>
+        <expression-component doc:name="Decrypt Key"><![CDATA[flowVars.apiKeyRecieved = topServices.Security.Decrypt(flowVars.apiKeyRecieved)]]></expression-component>
+        <set-variable variableName="apiKey" value="${api.key}" doc:name="Get apiKey"/>
+        <expression-filter expression="#[flowVars.apiKey == flowVars.apiKeyRecieved]" doc:name="Expression"/>
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveMessage" value="#[payload.toString()]" doc:name="Set saveMessage"/>
+        <expression-component doc:name="Expression"><![CDATA[payload.item_code = org.mule.util.StringUtils.replace(payload.item_code,"'","");
+payload.item_code = org.mule.util.StringUtils.replace(payload.item_code," ","");
+payload.item_code = org.mule.util.StringUtils.replace(payload.item_code,"=","");]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.toString() != flowVars.saveMessage]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT item_id, item_code, item_amount, item_price, item_stallid FROM OnlineStall.dbo.StallItems WHERE item_code = #[payload.item_code]]]></db:parameterized-query>
+        </db:select>
+        <choice doc:name="Choice">
+            <when expression="#[payload.size() &gt; 0]">
+                <foreach doc:name="For Each">
+                    <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.itemStallInfo]" doc:name="Database">
+                        <db:parameterized-query><![CDATA[SELECT * FROM OnlineStall.dbo.Stalls WHERE stall_id = #[payload.item_stallid] AND stall_date = #[server.dateTime.format("yyyy-MM-dd")]]]></db:parameterized-query>
+                    </db:select>
+                    <choice doc:name="Choice">
+                        <when expression="#[flowVars.itemStallInfo.size() &gt; 0]">
+                            <json:object-to-json-transformer doc:name="Object to JSON"/>
+                            <choice doc:name="Choice">
+                                <when expression="#[flowVars.itemInfo == null]">
+                                    <set-variable variableName="itemInfo" value="#[payload]" doc:name="Set itemInfo"/>
+                                </when>
+                                <otherwise>
+                                    <set-variable variableName="itemInfo" value="#[flowVars.itemInfo] , #[payload]" doc:name="Set itemInfo"/>
+                                </otherwise>
+                            </choice>
+                        </when>
+                        <otherwise>
+                            <logger message="Item outdated" level="INFO" doc:name="Logger"/>
+                        </otherwise>
+                    </choice>
+                </foreach>
+                <set-payload value="[ #[flowVars.itemInfo] ]" doc:name="Set Payload"/>
+            </when>
+            <otherwise>
+                <set-payload value="There is no stall with this item." doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+    <flow name="getStall">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/getStall" allowedMethods="POST" doc:name="HTTP"/>
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveMessage" value="#[payload.toString()]" doc:name="Set saveMessage"/>
+        <expression-component doc:name="Expression"><![CDATA[payload.charId = org.mule.util.StringUtils.replace(payload.charId,"'","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId," ","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId,"=","");]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.toString() != flowVars.saveMessage]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <set-variable variableName="charId" value="#[payload.charId]" doc:name="Set charId"/>
+        <flow-ref name="checkChar" doc:name="checkChar"/>
+        <choice doc:name="Choice">
+            <when expression="#[flowVars.charChecked == 1]">
+                <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+                    <db:parameterized-query><![CDATA[SELECT stall_id FROM OnlineStall.dbo.Stalls WHERE stall_ownerid = #[flowVars.charId]]]></db:parameterized-query>
+                </db:select>
+                <choice doc:name="Choice">
+                    <when expression="#[payload.size() == 1]">
+                        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+                            <db:parameterized-query><![CDATA[SELECT item_id, item_code, item_amount, item_price FROM OnlineStall.dbo.StallItems WHERE item_stallid = #[payload[0].stall_id]]]></db:parameterized-query>
+                        </db:select>
+                        <choice doc:name="Choice">
+                            <when expression="#[payload.size() &gt; 0]">
+                                <json:object-to-json-transformer doc:name="Object to JSON"/>
+                            </when>
+                            <otherwise>
+                                <set-payload value="You dont have any items in Stall" doc:name="Set Payload"/>
+                                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                            </otherwise>
+                        </choice>
+                    </when>
+                    <otherwise>
+                        <set-payload value="You dont have a Stall. Please create one." doc:name="Set Payload"/>
+                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                    </otherwise>
+                </choice>
+            </when>
+            <otherwise>
+                <set-payload value="This character is not yours." doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[202]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+    <flow name="createStall">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/createStall" allowedMethods="POST" doc:name="HTTP"/>
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveMessage" value="#[payload.toString()]" doc:name="Set saveMessage"/>
+        <expression-component doc:name="Expression"><![CDATA[payload.charId = org.mule.util.StringUtils.replace(payload.charId,"'","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId," ","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId,"=","");
+
+payload.charName = org.mule.util.StringUtils.replace(payload.charName,"'","");
+payload.charName = org.mule.util.StringUtils.replace(payload.charName," ","");
+payload.charName = org.mule.util.StringUtils.replace(payload.charName,"=","");
+
+payload.stallName = org.mule.util.StringUtils.replace(payload.stallName,"'","");
+payload.stallName = org.mule.util.StringUtils.replace(payload.stallName," ","");
+payload.stallName = org.mule.util.StringUtils.replace(payload.stallName,"=","");]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.toString() != flowVars.saveMessage]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <set-variable variableName="charId" value="#[payload.charId]" doc:name="Set charId"/>
+        <flow-ref name="checkChar" doc:name="checkChar"/>
+        <choice doc:name="Choice">
+            <when expression="#[flowVars.charChecked == 1]">
+                <set-variable variableName="charName" value="#[payload.charName]" doc:name="Set charName"/>
+                <set-variable variableName="stallName" value="#[payload.stallName]" doc:name="Set stallName"/>
+                <choice doc:name="Choice">
+                    <when expression="#[flowVars.stallName != null]">
+                        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+                            <db:parameterized-query><![CDATA[SELECT * FROM OnlineStall.dbo.Stalls WHERE stall_ownerid = #[flowVars.charId]]]></db:parameterized-query>
+                        </db:select>
+                        <choice doc:name="Choice">
+                            <when expression="#[payload.size() == 0]">
+                                <db:insert config-ref="Generic_Database_Configuration" doc:name="Database">
+                                    <db:parameterized-query><![CDATA[INSERT INTO OnlineStall.dbo.Stalls (stall_ownerid, stall_name, stall_ownername, stall_date, stall_money) VALUES (#[flowVars.charId], #[flowVars.stallName], #[flowVars.charName], #[server.dateTime.format("yyyy-MM-dd")], 0);]]></db:parameterized-query>
+                                </db:insert>
+                                <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+                                    <db:parameterized-query><![CDATA[SELECT stall_id FROM OnlineStall.dbo.Stalls WHERE stall_ownerid = #[flowVars.charId]]]></db:parameterized-query>
+                                </db:select>
+                                <set-payload value="#[payload[0].stall_id.toString()]" doc:name="Set Payload"/>
+                                <logger level="INFO" doc:name="Logger"/>
+                            </when>
+                            <otherwise>
+                                <set-payload value="You already have a Stall" doc:name="Set Payload"/>
+                                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                            </otherwise>
+                        </choice>
+                    </when>
+                    <otherwise>
+                        <set-payload value="You have to name your Stall" doc:name="Set Payload"/>
+                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                    </otherwise>
+                </choice>
+            </when>
+            <otherwise>
+                <set-payload value="This character is not yours." doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[202]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+    <flow name="getAllStalls">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/getAllStalls" allowedMethods="GET" doc:name="HTTP"/>
+        <set-variable variableName="apiKeyRecieved" value="#[message.inboundProperties.'Key']" doc:name="Set apiKeyRecieved"/>
+        <expression-component doc:name="Decrypt Key"><![CDATA[flowVars.apiKeyRecieved = topServices.Security.Decrypt(flowVars.apiKeyRecieved)]]></expression-component>
+        <set-variable variableName="apiKey" value="${api.key}" doc:name="Get apiKey"/>
+        <expression-filter expression="#[flowVars.apiKey == flowVars.apiKeyRecieved]" doc:name="Expression"/>
+        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT stall_ownerid, stall_ownername, stall_id, stall_name FROM OnlineStall.dbo.Stalls WHERE stall_date = #[server.dateTime.format("yyyy-MM-dd")]]]></db:parameterized-query>
+        </db:select>
+        <choice doc:name="Choice">
+            <when expression="#[payload.size() &gt; 0]">
+                <foreach doc:name="For Each">
+                    <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.itemStall]" doc:name="Database">
+                        <db:parameterized-query><![CDATA[SELECT * FROM OnlineStall.dbo.StallItems WHERE item_stallid = #[payload.stall_id]]]></db:parameterized-query>
+                    </db:select>
+                    <choice doc:name="Choice">
+                        <when expression="#[flowVars.itemStall.size() &gt; 0]">
+                            <set-payload value="{ &quot;stall_id&quot;: #[payload.stall_id], &quot;stall_ownerid&quot;: #[payload.stall_ownerid], &quot;stall_ownername&quot;: &quot;#[payload.stall_ownername]&quot;, &quot;stall_name&quot;: &quot;#[payload.stall_name]&quot; }" doc:name="Set Payload"/>
+                            <choice doc:name="Choice">
+                                <when expression="#[flowVars.allStalls == null]">
+                                    <set-variable variableName="allStalls" value="#[payload]" doc:name="Set allStalls"/>
+                                </when>
+                                <otherwise>
+                                    <set-variable variableName="allStalls" value="#[flowVars.allStalls], #[payload]" doc:name="Set allStalls"/>
+                                </otherwise>
+                            </choice>
+                        </when>
+                        <otherwise>
+                            <logger level="INFO" doc:name="Logger"/>
+                        </otherwise>
+                    </choice>
+                </foreach>
+                <choice doc:name="Choice">
+                    <when expression="#[flowVars.allStalls != null]">
+                        <set-payload value="[ #[flowVars.allStalls] ]" doc:name="Set Payload"/>
+                        <logger level="INFO" doc:name="Logger"/>
+                    </when>
+                    <otherwise>
+                        <set-payload value="No one has set items to their Stalls." doc:name="Set Payload"/>
+                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                    </otherwise>
+                </choice>
+            </when>
+            <otherwise>
+                <set-payload value="There are no stalls available." doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+    <flow name="getOwnerStall">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/getOwnerStall" allowedMethods="POST" doc:name="HTTP"/>
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveMessage" value="#[payload.toString()]" doc:name="Set saveMessage"/>
+        <expression-component doc:name="Expression"><![CDATA[payload.stall_id = org.mule.util.StringUtils.replace(payload.stall_id,"'","");
+payload.stall_id = org.mule.util.StringUtils.replace(payload.stall_id," ","");
+payload.stall_id = org.mule.util.StringUtils.replace(payload.stall_id,"=","");
+]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.toString() != flowVars.saveMessage]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <set-variable variableName="stallId" value="#[payload.stall_id]" doc:name="Set stallId"/>
+        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT * FROM OnlineStall.dbo.StallItems WHERE item_stallid = #[flowVars.stallId]]]></db:parameterized-query>
+        </db:select>
+        <choice doc:name="Choice">
+            <when expression="#[payload.size() &gt; 0]">
+                <json:object-to-json-transformer doc:name="Object to JSON"/>
+            </when>
+            <otherwise>
+                <set-payload value="This stall dont have any items or does not exists." doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+    <flow name="removeStallItem">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/removeStallItem" allowedMethods="POST" doc:name="HTTP"/>
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveMessage" value="#[payload.toString()]" doc:name="Set saveMessage"/>
+        <expression-component doc:name="Expression"><![CDATA[payload.charId = org.mule.util.StringUtils.replace(payload.charId,"'","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId," ","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId,"=","");
+
+payload.stallItemsId = org.mule.util.StringUtils.replace(payload.stallItemsId,"'","");
+payload.stallItemsId = org.mule.util.StringUtils.replace(payload.stallItemsId," ","");
+payload.stallItemsId = org.mule.util.StringUtils.replace(payload.stallItemsId,"=","");
+]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.toString() != flowVars.saveMessage]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <set-variable variableName="charId" value="#[payload.charId]" doc:name="Set charId"/>
+        <flow-ref name="checkChar" doc:name="checkChar"/>
+        <choice doc:name="Choice">
+            <when expression="#[flowVars.charChecked == 1]">
+                <set-variable variableName="stallItemsId" value="#[payload.stallItemsId]" doc:name="Set stallItemsId"/>
+                <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+                    <db:parameterized-query><![CDATA[SELECT stall_id FROM OnlineStall.dbo.Stalls WHERE stall_ownerid = #[flowVars.charId]]]></db:parameterized-query>
+                </db:select>
+                <choice doc:name="Choice">
+                    <when expression="#[payload.size() &gt; 0]">
+                        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+                            <db:parameterized-query><![CDATA[SELECT item_id, item_code, item_amount FROM OnlineStall.dbo.StallItems WHERE item_id = #[flowVars.stallItemsId] AND item_stallid = #[payload[0].stall_id]]]></db:parameterized-query>
+                        </db:select>
+                        <choice doc:name="Choice">
+                            <when expression="#[payload.size() &gt; 0]">
+                                <set-variable variableName="itemId" value="#[payload[0].item_code]" doc:name="Set itemId"/>
+                                <set-variable variableName="itemAmount" value="#[payload[0].item_amount]" doc:name="Set itemAmount"/>
+                                <set-variable variableName="clubLvl" value="#[1]" doc:name="Set clubLvl"/>
+                                <flow-ref name="addItemToMember" doc:name="addItemToMember"/>
+                                <choice doc:name="Choice">
+                                    <when expression="#[payload == 1]">
+                                        <db:delete config-ref="Generic_Database_Configuration" doc:name="Database">
+                                            <db:parameterized-query><![CDATA[DELETE FROM OnlineStall.dbo.StallItems WHERE item_id = #[flowVars.stallItemsId]]]></db:parameterized-query>
+                                        </db:delete>
+                                        <set-payload value="Stall Item Removed" doc:name="Set Payload"/>
+                                    </when>
+                                    <otherwise>
+                                        <set-payload value="Failed to return item to character. Check if inventory has space" doc:name="Set Payload"/>
+                                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                                    </otherwise>
+                                </choice>
+                            </when>
+                            <otherwise>
+                                <set-payload value="Cant find stall item or this is not yours" doc:name="Set Payload"/>
+                                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                            </otherwise>
+                        </choice>
+                    </when>
+                    <otherwise>
+                        <set-payload value="You dont have a stall" doc:name="Set Payload"/>
+                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                    </otherwise>
+                </choice>
+            </when>
+            <otherwise>
+                <set-payload value="This character is not yours" doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+    <flow name="redeemStallMoney">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/redeemStallMoney" allowedMethods="POST" doc:name="HTTP"/>
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveMessage" value="#[payload.toString()]" doc:name="Set saveMessage"/>
+        <expression-component doc:name="Expression"><![CDATA[payload.charId = org.mule.util.StringUtils.replace(payload.charId,"'","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId," ","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId,"=","");
+]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.toString() != flowVars.saveMessage]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <set-variable variableName="charId" value="#[payload.charId]" doc:name="Set charId"/>
+        <flow-ref name="checkChar" doc:name="checkChar"/>
+        <choice doc:name="Choice">
+            <when expression="#[flowVars.charChecked == 1]">
+                <choice doc:name="Choice">
+                    <when expression="#[flowVars.loginStatus == 0]">
+                        <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.stallMoney]" doc:name="Database">
+                            <db:parameterized-query><![CDATA[SELECT stall_money, stall_id FROM OnlineStall.dbo.Stalls WHERE stall_ownerid= #[flowVars.charId]]]></db:parameterized-query>
+                        </db:select>
+                        <choice doc:name="Choice">
+                            <when expression="#[payload.size() &gt; 0]">
+                                <choice doc:name="Choice">
+                                    <when expression="#[flowVars.stallMoney[0].stall_money &gt; 0]">
+                                        <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.charMoney]" doc:name="Database">
+                                            <db:parameterized-query><![CDATA[SELECT gd FROM GameDB.dbo.character WHERE cha_id = #[flowVars.charId]]]></db:parameterized-query>
+                                        </db:select>
+                                        <set-variable variableName="newMoney" value="#[flowVars.stallMoney[0].stall_money + flowVars.charMoney[0].gd]" doc:name="Set newMoney"/>
+                                        <choice doc:name="Choice">
+                                            <when expression="#[flowVars.newMoney &lt; 1999999999]">
+                                                <db:update config-ref="Generic_Database_Configuration" doc:name="Database">
+                                                    <db:parameterized-query><![CDATA[UPDATE GameDB.dbo.character
+SET gd = #[flowVars.newMoney] WHERE cha_id = #[flowVars.charId]]]></db:parameterized-query>
+                                                </db:update>
+                                                <db:update config-ref="Generic_Database_Configuration" doc:name="Database">
+                                                    <db:parameterized-query><![CDATA[UPDATE OnlineStall.dbo.Stalls
+SET stall_money = 0 WHERE stall_id = #[flowVars.stallMoney[0].stall_id]]]></db:parameterized-query>
+                                                </db:update>
+                                                <set-payload value="Money recieved" doc:name="Set Payload"/>
+                                            </when>
+                                            <otherwise>
+                                                <set-payload value="Your character cant carry that much money" doc:name="Set Payload"/>
+                                                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                                            </otherwise>
+                                        </choice>
+                                    </when>
+                                    <otherwise>
+                                        <set-payload value="You dont have any money to redeem.
+" doc:name="Set Payload"/>
+                                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                                    </otherwise>
+                                </choice>
+                            </when>
+                            <otherwise>
+                                <set-payload value="You dont have any Stall." doc:name="Set Payload"/>
+                                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                            </otherwise>
+                        </choice>
+                    </when>
+                    <otherwise>
+                        <set-payload value="Please log out from Character Account." doc:name="Set Payload"/>
+                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                    </otherwise>
+                </choice>
+            </when>
+            <otherwise>
+                <set-payload value="This character is not yours" doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[202]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+    <flow name="deleteStall">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/deleteStall" allowedMethods="POST" doc:name="HTTP"/>
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveMessage" value="#[payload.toString()]" doc:name="Set saveMessage"/>
+        <expression-component doc:name="Expression"><![CDATA[payload.charId = org.mule.util.StringUtils.replace(payload.charId,"'","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId," ","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId,"=","");
+]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.toString() != flowVars.saveMessage]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <set-variable variableName="charId" value="#[payload.charId]" doc:name="Set charId"/>
+        <flow-ref name="checkChar" doc:name="checkChar"/>
+        <choice doc:name="Choice">
+            <when expression="#[flowVars.charChecked == 1]">
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.stallInfo]" doc:name="Database">
+                    <db:parameterized-query><![CDATA[SELECT stall_id FROM OnlineStall.dbo.Stalls WHERE stall_ownerid = #[flowVars.charId]]]></db:parameterized-query>
+                </db:select>
+                <choice doc:name="Choice">
+                    <when expression="#[flowVars.stallInfo.size() &gt; 0]">
+                        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+                            <db:parameterized-query><![CDATA[SELECT * FROM OnlineStall.dbo.StallItems WHERE item_stallid = #[flowVars.stallInfo[0].stall_id]]]></db:parameterized-query>
+                        </db:select>
+                        <choice doc:name="Choice">
+                            <when expression="#[payload.size() == 0 &amp;&amp; flowVars.stallInfo[0].stall_money &gt; 0]">
+                                <db:delete config-ref="Generic_Database_Configuration" doc:name="Database">
+                                    <db:parameterized-query><![CDATA[DELETE FROM OnlineStall.dbo.Stalls WHERE stall_id = #[flowVars.stallInfo[0].stall_id]]]></db:parameterized-query>
+                                </db:delete>
+                                <set-payload value="Stall removed!" doc:name="Set Payload"/>
+                            </when>
+                            <otherwise>
+                                <set-payload value="You have items or money in your stall to redeem." doc:name="Set Payload"/>
+                                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                            </otherwise>
+                        </choice>
+                    </when>
+                    <otherwise>
+                        <set-payload value="You dont have any Stall" doc:name="Set Payload"/>
+                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+                    </otherwise>
+                </choice>
+            </when>
+            <otherwise>
+                <set-payload value="This character is not yours" doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+    
+</mule>

@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:json="http://www.mulesoft.org/schema/mule/json"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd">
+	<flow name="redeemClubMember">
+		<http:listener config-ref="HTTP_Listener_Configuration"
+			path="/redeemClub" allowedMethods="POST" doc:name="HTTP" />
+		<json:json-to-object-transformer
+			returnClass="java.util.HashMap" doc:name="JSON to Object" />
+		<set-variable variableName="saveMessage" value="#[payload.toString()]"
+			doc:name="Set saveMessage" />
+		<expression-component doc:name="Expression"><![CDATA[payload.charId = org.mule.util.StringUtils.replace(payload.charId,"'","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId," ","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId,"=","");
+
+payload.clubId = org.mule.util.StringUtils.replace(payload.clubId,"'","");
+payload.clubId = org.mule.util.StringUtils.replace(payload.clubId," ","");
+payload.clubId = org.mule.util.StringUtils.replace(payload.clubId,"=","");
+
+]]></expression-component>
+		<choice doc:name="Choice">
+			<when expression="#[payload.toString() != flowVars.saveMessage]">
+				<logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+				<flow-ref name="banPlayer" doc:name="banPlayer"/>
+			</when>
+			<otherwise>
+				<logger message="No special chars detected." level="INFO" doc:name="Logger" />
+				<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+				<db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+					<db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+				</db:select>
+				<expression-filter expression="#[flowVars.ban.size() == 0]"
+					doc:name="Expression" />
+
+			</otherwise>
+		</choice>
+		<set-variable variableName="charId" value="#[payload.charId]"
+			doc:name="Set charId" />
+		<flow-ref name="checkChar" doc:name="checkChar" />
+		<choice doc:name="Choice">
+			<when expression="#[flowVars.charChecked == 1]">
+				<choice doc:name="Choice">
+					<when expression="#[flowVars.loginStatus == 0]">
+						<set-variable variableName="clubId" value="#[payload.clubId]"
+							doc:name="Set clubId" />
+						<db:select config-ref="Generic_Database_Configuration"
+							target="#[flowVars.charInfo]" doc:name="Database">
+							<db:parameterized-query><![CDATA[SELECT degree FROM GameDB.dbo.character WHERE cha_id = #[flowVars.charId]]]></db:parameterized-query>
+						</db:select>
+						<db:select config-ref="Generic_Database_Configuration"
+							target="#[flowVars.ClubInfo]" doc:name="Database">
+							<db:parameterized-query><![CDATA[SELECT * FROM PirateClub.dbo.Clubs WHERE club_id = #[flowVars.clubId]]]></db:parameterized-query>
+						</db:select>
+						<choice doc:name="Choice">
+							<when
+								expression="#[flowVars.charInfo[0].degree &gt;= flowVars.ClubInfo[0].club_lvl]">
+								<db:select config-ref="Generic_Database_Configuration"
+									target="#[flowVars.charSigned]" doc:name="Database">
+									<db:parameterized-query><![CDATA[SELECT * FROM PirateClub.dbo.Signed WHERE signed_chaid = #[flowVars.charId] AND signed_clubid = #[flowVars.clubId]]]></db:parameterized-query>
+								</db:select>
+								<choice doc:name="Choice">
+									<when expression="#[flowVars.charSigned.size() &gt; 0]">
+										<set-variable variableName="clubLvl"
+											value="#[flowVars.ClubInfo[0].club_lvl]" doc:name="Set clubLvl" />
+										<flow-ref name="addItemToMember" doc:name="addItemToMember" />
+										<choice doc:name="Choice">
+											<when expression="#[payload == 1]">
+												<db:update config-ref="Generic_Database_Configuration"
+													doc:name="Database">
+													<db:parameterized-query><![CDATA[UPDATE PirateClub.dbo.Clubs 
+SET club_gradChar = #[flowVars.ClubInfo[0].club_gradChar + 1], club_gradPend = #[flowVars.ClubInfo[0].club_gradPend + 1] 
+WHERE club_id = #[flowVars.clubId]]]></db:parameterized-query>
+												</db:update>
+												<db:delete config-ref="Generic_Database_Configuration"
+													doc:name="Database">
+													<db:parameterized-query><![CDATA[DELETE FROM PirateClub.dbo.Signed WHERE signed_chaid = #[flowVars.charId] AND signed_clubid = #[flowVars.ClubInfo[0].club_id]]]></db:parameterized-query>
+												</db:delete>
+												<set-payload value="Items Redeemed!" doc:name="Set Payload" />
+											</when>
+											<otherwise>
+												<set-payload
+													value="Your character does not have enough space in temp bag."
+													doc:name="Set Payload" />
+                                                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+											</otherwise>
+										</choice>
+									</when>
+									<otherwise>
+										<set-payload value="You are not signed in this Club"
+											doc:name="Set Payload" />
+                                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+									</otherwise>
+								</choice>
+							</when>
+							<otherwise>
+								<set-payload value="Your lvl is still too low to graduate from this Club."
+									doc:name="Set Payload" />
+                                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+							</otherwise>
+						</choice>
+					</when>
+					<otherwise>
+						<set-payload value="Please log out from account to receive rewards."
+							doc:name="Set Payload" />
+                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+					</otherwise>
+				</choice>
+			</when>
+			<otherwise>
+				<set-payload value="This character is not yours"
+					doc:name="Set Payload" />
+				<set-property propertyName="http.status" value="#[202]"
+					doc:name="Property" />
+			</otherwise>
+		</choice>
+	</flow>
+	<flow name="redeemClubLeader">
+		<http:listener config-ref="HTTP_Listener_Configuration"
+			path="/redeemPend" allowedMethods="POST" doc:name="HTTP" />
+		<json:json-to-object-transformer
+			returnClass="java.util.HashMap" doc:name="JSON to Object" />
+		<set-variable variableName="saveMessage" value="#[payload.toString()]"
+			doc:name="Set saveMessage" />
+		<expression-component doc:name="Expression"><![CDATA[payload.charId = org.mule.util.StringUtils.replace(payload.charId,"'","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId," ","");
+payload.charId = org.mule.util.StringUtils.replace(payload.charId,"=","");
+
+payload.clubId = org.mule.util.StringUtils.replace(payload.clubId,"'","");
+payload.clubId = org.mule.util.StringUtils.replace(payload.clubId," ","");
+payload.clubId = org.mule.util.StringUtils.replace(payload.clubId,"=","");
+
+]]></expression-component>
+		<choice doc:name="Choice">
+			<when expression="#[payload.toString() != flowVars.saveMessage]">
+				<logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+			</when>
+			<otherwise>
+				<logger message="No special chars detected." level="INFO"
+					doc:name="Logger" />
+				<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+				<db:select config-ref="Generic_Database_Configuration"
+					target="#[flowVars.ban]" doc:name="Database">
+					<db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+				</db:select>
+				<expression-filter expression="#[flowVars.ban.size() == 0]"
+					doc:name="Expression" />
+
+			</otherwise>
+		</choice>
+		<set-variable variableName="charId" value="#[payload.charId]"
+			doc:name="Set charId" />
+		<flow-ref name="checkChar" doc:name="checkChar" />
+		<choice doc:name="Choice">
+			<when expression="#[flowVars.charChecked == 1]">
+				<choice doc:name="Choice">
+					<when expression="#[flowVars.loginStatus == 0]">
+						<set-variable variableName="redeemInfo" value="#[payload]"
+							doc:name="Set redeemInfo" />
+						<db:select config-ref="Generic_Database_Configuration"
+							target="#[flowVars.clubInfo]" doc:name="Database">
+							<db:parameterized-query><![CDATA[SELECT club_gradPend, club_lvl, club_leaderid FROM PirateClub.dbo.Clubs WHERE club_id = #[flowVars.redeemInfo.clubId]]]></db:parameterized-query>
+						</db:select>
+						<choice doc:name="Choice">
+							<when expression="#[flowVars.clubInfo[0].club_gradPend &gt; 0]">
+								<set-variable variableName="clubLvl"
+									value="#[flowVars.clubInfo[0].club_lvl]" doc:name="Set clubLvl" />
+								<expression-component doc:name="Expression"><![CDATA[payload = topServices.CharParser.getRedeemCount(flowVars.clubInfo[0].club_gradPend);]]></expression-component>
+								<foreach doc:name="For Each">
+									<flow-ref name="addItemToLeader" doc:name="addItemToLeader" />
+									<choice doc:name="Choice">
+										<when expression="#[payload == 1]">
+											<db:select config-ref="Generic_Database_Configuration"
+												doc:name="Database">
+												<db:parameterized-query><![CDATA[SELECT club_gradPend, club_id FROM PirateClub.dbo.Clubs WHERE club_id = #[flowVars.redeemInfo.clubId]]]></db:parameterized-query>
+											</db:select>
+											<db:update config-ref="Generic_Database_Configuration"
+												doc:name="Database">
+												<db:parameterized-query><![CDATA[UPDATE PirateClub.dbo.Clubs 
+SET club_gradPend = #[payload[0].club_gradPend - 1] 
+WHERE club_id = #[payload[0].club_id]]]></db:parameterized-query>
+											</db:update>
+											<logger level="INFO" doc:name="Logger" />
+											<set-variable variableName="Response" value="Items Redeemed"
+												doc:name="set Response" />
+										</when>
+										<otherwise>
+											<set-variable variableName="Response"
+												value="Your inventory is full. But you may already redeemed some rewards."
+												doc:name="set Response" />
+										</otherwise>
+									</choice>
+								</foreach>
+								<set-payload value="#[flowVars.Response]" doc:name="Set Payload" />
+							</when>
+							<otherwise>
+								<set-payload value="There are no items to redeem"
+									doc:name="Set Payload" />
+                                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+							</otherwise>
+						</choice>
+					</when>
+					<otherwise>
+						<set-payload value="Please log out from account to receive rewards."
+							doc:name="Set Payload" />
+                        <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+					</otherwise>
+				</choice>
+			</when>
+			<otherwise>
+				<set-payload value="This character is not yours"
+					doc:name="Set Payload" />
+				<set-property propertyName="http.status" value="#[202]"
+					doc:name="Property" />
+			</otherwise>
+		</choice>
+	</flow>
+</mule>

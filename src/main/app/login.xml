@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd">
+    <flow name="loginFlow">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/Login" allowedMethods="POST" doc:name="HTTP"/>
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveMessage" value="#[payload.toString()]" doc:name="Set saveMessage"/>
+        <expression-component doc:name="Expression"><![CDATA[payload.user = org.mule.util.StringUtils.replace(payload.user,"'","");
+payload.user = org.mule.util.StringUtils.replace(payload.user," ","");
+payload.user = org.mule.util.StringUtils.replace(payload.user,"=","");
+payload.pass = org.mule.util.StringUtils.replace(payload.pass,"'","");
+payload.pass = org.mule.util.StringUtils.replace(payload.pass," ","");
+payload.pass = org.mule.util.StringUtils.replace(payload.pass,"=","");]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.toString() != flowVars.saveMessage]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <set-variable variableName="User" value="#[payload.user]" doc:name="Set User"/>
+        <set-variable variableName="Pass" value="#[payload.pass]" doc:name="Set Pass"/>
+        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT id
+      ,name
+      ,password
+      ,login_status
+  FROM AccountServer.dbo.account_login
+  WHERE name = #[payload.user] and password = #[payload.pass]]]></db:parameterized-query>
+        </db:select>
+        <choice doc:name="Choice">
+            <when expression="#[payload.size() == 1]">
+                <set-payload value="Login Successfully" mimeType="text/plain" doc:name="Set Payload"/>
+                <message-properties-transformer doc:name="Message Properties">
+                    <add-message-property key="User" value="#[flowVars.User]"/>
+                    <add-message-property key="Pass" value="#[flowVars.Pass]"/>
+                </message-properties-transformer>
+            </when>
+            <otherwise>
+                <set-payload value="Wrong user/pass" doc:name="Set Payload"/>
+                <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+            </otherwise>
+        </choice>
+    </flow>
+    <flow name="createAccount">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/createAccount" allowedMethods="POST" doc:name="HTTP"/>
+        <set-payload value="#[payload]" mimeType="application/json" doc:name="Set Payload"/>
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <set-variable variableName="saveMessage" value="#[payload.toString()]" doc:name="Set saveMessage"/>
+        <expression-component doc:name="Expression"><![CDATA[payload.user = org.mule.util.StringUtils.replace(payload.user,"'","");
+payload.user = org.mule.util.StringUtils.replace(payload.user," ","");
+payload.user = org.mule.util.StringUtils.replace(payload.user,"=","");
+payload.pass = org.mule.util.StringUtils.replace(payload.pass,"'","");
+payload.pass = org.mule.util.StringUtils.replace(payload.pass," ","");
+payload.pass = org.mule.util.StringUtils.replace(payload.pass,"=","");
+payload.email = org.mule.util.StringUtils.replace(payload.email,"'","");
+payload.email = org.mule.util.StringUtils.replace(payload.email," ","");
+payload.email = org.mule.util.StringUtils.replace(payload.email,"=","");]]></expression-component>
+        <choice doc:name="Choice">
+            <when expression="#[payload.toString() != flowVars.saveMessage]">
+                <logger message="Sql Injection Queries found in the Request #[flowVars.saveMessage]" level="INFO" doc:name="Logger"/>
+<flow-ref name="banPlayer" doc:name="banPlayer"/>
+            </when>
+            <otherwise>
+                <logger message="No special chars detected." level="INFO" doc:name="Logger"/>
+<expression-component doc:name="Expression"><![CDATA[flowVars.saveIp = topServices.Security.parseIp(message.inboundProperties.'http.remote.address');]]></expression-component>
+                <db:select config-ref="Generic_Database_Configuration" target="#[flowVars.ban]" doc:name="Database">
+ <db:parameterized-query><![CDATA[SELECT * FROM BanRecords.dbo.Banned WHERE ban_ip = #[flowVars.saveIp]]]></db:parameterized-query>
+ </db:select>
+<expression-filter expression="#[flowVars.ban.size() == 0]" doc:name="Expression"/>
+
+            </otherwise>
+        </choice>
+        <set-variable variableName="saveUser" value="#[payload.user]" doc:name="saveUser"/>
+        <set-variable variableName="gmLevel" value="0" doc:name="gmLevel"/>
+        <db:insert config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[INSERT INTO [AccountServer].[dbo].[account_login] (name, password, originalPassword, email, ban) VALUES (#[payload.user], #[payload.pass], #[payload.oldPass] ,#[payload.email],0);]]></db:parameterized-query>
+        </db:insert>
+        <logger message="Account Created" level="INFO" doc:name="Logger"/>
+        <db:select config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT MAX(act_id) FROM GameDB.dbo.account]]></db:parameterized-query>
+        </db:select>
+        <foreach doc:name="For Each">
+            <foreach doc:name="For Each">
+                <set-variable variableName="saveId" value="#[payload + 1]" doc:name="saveId"/>
+            </foreach>
+        </foreach>
+        <db:insert config-ref="Generic_Database_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[INSERT INTO GameDB.dbo.account (act_id, act_name, gm, cha_ids, last_ip, disc_reason, last_leave, password, merge_state) VALUES (#[flowVars.saveId], #[flowVars.saveUser], #[flowVars.gmLevel], ';', ' ', ' ', '2018-08-31 04:20:00.000', null, 0);]]></db:parameterized-query>
+        </db:insert>
+        <set-payload value="Account Successfully created" doc:name="Set Payload"/>
+        <catch-exception-strategy doc:name="Catch Exception Strategy">
+            <set-payload value="This username already exists." doc:name="Set Payload"/>
+            <set-property propertyName="http.status" value="#[201]" doc:name="Property"/>
+        </catch-exception-strategy>
+    </flow>
+</mule>
